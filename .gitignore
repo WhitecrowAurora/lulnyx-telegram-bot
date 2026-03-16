@@ -1,0 +1,10 @@
+config.json
+node_modules/
+dist/
+data/state.json
+data/state.sqlite
+data/state.sqlite-wal
+data/state.sqlite-shm
+data/*.log
+data/*.tmp
+data/*.bak

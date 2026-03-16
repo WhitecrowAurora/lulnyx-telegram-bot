@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a problem
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Include config snippets only after removing secrets.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: OS / distro
+      placeholder: Debian 12 / Ubuntu 22.04 / CentOS 7 ...
+  - type: input
+    attributes:
+      label: Node version
+      placeholder: v22.x / v24.x
+  - type: textarea
+    attributes:
+      label: Logs
+      description: Paste sanitized logs (no tokens/keys).
+

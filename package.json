@@ -1,0 +1,13 @@
+{
+  "name": "darkcrow-telegram-chatgpt-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs",
+    "build:sea:win": "powershell -ExecutionPolicy Bypass -File scripts/build-sea.ps1",
+    "build:sea:linux": "bash scripts/build-sea.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

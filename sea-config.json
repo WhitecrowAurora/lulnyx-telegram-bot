@@ -1,0 +1,4 @@
+{
+  "main": "dist/sea-main.cjs",
+  "output": "dist/sea-prep.blob"
+}

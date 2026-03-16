@@ -1,0 +1,141 @@
+{
+  "app": {
+    "displayName": "My Telegram Bot",
+    "setupCompleted": true
+  },
+  "telegram": {
+    "token": "PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE",
+    "allowAll": false,
+    "allowedChatIds": [],
+    "allowedUserIds": [],
+    "autoReplyByDefault": false,
+    "queue": {
+      "minIntervalMs": 0,
+      "maxConcurrentJobs": 0,
+      "maxPendingPerChat": 0
+    }
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3210
+  },
+  "web": {
+    "username": "admin",
+    "password": "change_me",
+    "cookieSecure": false
+  },
+  "stateStorage": {
+    "type": "json",
+    "jsonPath": "data/state.json",
+    "sqlitePath": "data/state.sqlite"
+  },
+  "search": {
+    "enabled": false,
+    "type": "searxng",
+    "baseUrl": "http://127.0.0.1:8080",
+    "timeoutMs": 10000,
+    "maxResults": 5,
+    "language": "en",
+    "safeSearch": 1,
+    "toolCallingEnabled": false,
+    "toolCallingMaxTurns": 2
+  },
+  "providers": [
+    {
+      "id": "openai-responses",
+      "name": "OpenAI (Responses)",
+      "baseUrl": "https://api.openai.com",
+      "apiKey": "PUT_API_KEY_HERE",
+      "apiType": "responses",
+      "model": "gpt-4.1-mini",
+      "responsesStyle": "instructions+messages"
+    },
+    {
+      "id": "openai-chat",
+      "name": "OpenAI (Chat Completions)",
+      "baseUrl": "https://api.openai.com",
+      "apiKey": "PUT_API_KEY_HERE",
+      "apiType": "chat_completions",
+      "model": "gpt-4.1-mini"
+    }
+  ],
+  "defaultProviderId": "openai-responses",
+  "prompts": [
+    {
+      "id": "default",
+      "name": "Default",
+      "system": "You are a helpful assistant."
+    },
+    {
+      "id": "coder",
+      "name": "Coder",
+      "system": "You are a concise senior engineer. Ask clarifying questions when requirements are ambiguous. Provide minimal, correct code."
+    }
+  ],
+  "defaultPromptId": "default",
+  "personas": [
+    {
+      "id": "neutral",
+      "name": "Neutral",
+      "system": "Write clearly and directly."
+    },
+    {
+      "id": "cute",
+      "name": "Cute",
+      "system": "Use a warm, friendly tone. Keep answers concise."
+    }
+  ],
+  "defaultPersonaId": "neutral",
+  "rules": [
+    "If the user asks for secrets or private data, refuse.",
+    "Prefer concise, actionable answers."
+  ],
+  "memory": {
+    "enabledByDefault": true,
+    "maxMessages": 20,
+    "maxCharsPerMessage": 4000
+  },
+  "facts": {
+    "maxFacts": 30
+  },
+  "longTerm": {
+    "enabled": false,
+    "memoryEnabled": false,
+    "personaEnabled": false,
+    "daysToInclude": 7,
+    "summaryProviderId": "",
+    "dailySummary": {
+      "enabled": false,
+      "time": "03:00"
+    },
+    "compression": {
+      "enabled": false,
+      "triggerTokens": 200000,
+      "chunkMessages": 40
+    }
+  },
+  "quotas": {
+    "enabled": false,
+    "perUserTokensPerDay": 0,
+    "perChatTokensPerDay": 0,
+    "perUserRepliesPerDay": 0,
+    "perChatRepliesPerDay": 0
+  },
+  "openai": {
+    "timeoutMs": 60000,
+    "temperature": 0.7,
+    "topP": 1,
+    "presencePenalty": 0,
+    "frequencyPenalty": 0,
+    "maxOutputTokens": 1024,
+    "retry": {
+      "enabled": false,
+      "maxRetries": 0,
+      "baseDelayMs": 300,
+      "maxDelayMs": 3000,
+      "retryOnTimeout": true,
+      "retryOn429": true,
+      "retryOn5xx": true
+    }
+  }
+}

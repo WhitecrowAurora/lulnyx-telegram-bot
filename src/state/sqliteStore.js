@@ -6,6 +6,10 @@ import {
   clampInt,
   conversationKey,
   defaultUserProfile,
+  normalizeGlobalPersonaReplyCount,
+  normalizeGlobalPersonaReplyLimit,
+  normalizeUserProfileState,
+  normalizeBool,
   normalizeOptionalChatReplyStyle,
   normalizeUserDisplayNameMode,
   normalizeUserPromptSlot
@@ -33,6 +37,10 @@ export async function createSqliteStateStore({ logger, configStore }) {
       provider_id TEXT NOT NULL DEFAULT '',
       auto_reply INTEGER NOT NULL DEFAULT 0,
       reply_style TEXT NOT NULL DEFAULT 'reply_and_mention',
+      global_persona_enabled INTEGER NOT NULL DEFAULT 0,
+      global_persona_user_id TEXT NOT NULL DEFAULT '',
+      global_persona_reply_limit INTEGER NOT NULL DEFAULT 100,
+      global_persona_reply_count INTEGER NOT NULL DEFAULT 0,
       chat_type TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL DEFAULT '',
       username TEXT NOT NULL DEFAULT '',
@@ -88,6 +96,8 @@ export async function createSqliteStateStore({ logger, configStore }) {
       last_name TEXT NOT NULL DEFAULT '',
       display_name_mode TEXT NOT NULL DEFAULT 'username',
       custom_display_name TEXT NOT NULL DEFAULT '',
+      custom_persona TEXT NOT NULL DEFAULT '',
+      custom_persona_enabled INTEGER NOT NULL DEFAULT 0,
       custom_prompt_1 TEXT NOT NULL DEFAULT '',
       custom_prompt_2 TEXT NOT NULL DEFAULT '',
       active_prompt_slot TEXT NOT NULL DEFAULT '',
@@ -103,6 +113,18 @@ export async function createSqliteStateStore({ logger, configStore }) {
   } catch {}
   try {
     db.exec("ALTER TABLE chat_settings ADD COLUMN reply_style TEXT NOT NULL DEFAULT 'reply_and_mention'");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_enabled INTEGER NOT NULL DEFAULT 0");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_user_id TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_reply_limit INTEGER NOT NULL DEFAULT 100");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_reply_count INTEGER NOT NULL DEFAULT 0");
   } catch {}
   try {
     db.exec("ALTER TABLE chat_settings ADD COLUMN chat_type TEXT NOT NULL DEFAULT ''");
@@ -144,6 +166,12 @@ export async function createSqliteStateStore({ logger, configStore }) {
     db.exec("ALTER TABLE user_profiles ADD COLUMN custom_display_name TEXT NOT NULL DEFAULT ''");
   } catch {}
   try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN custom_persona TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN custom_persona_enabled INTEGER NOT NULL DEFAULT 0");
+  } catch {}
+  try {
     db.exec("ALTER TABLE user_profiles ADD COLUMN custom_prompt_1 TEXT NOT NULL DEFAULT ''");
   } catch {}
   try {
@@ -168,15 +196,19 @@ export async function createSqliteStateStore({ logger, configStore }) {
   const stmtGetMeta = db.prepare("SELECT value FROM meta WHERE key = ?");
   const stmtUpsertMeta = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
   const stmtGetChat = db.prepare(
-    "SELECT chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings WHERE chat_id = ?"
+    "SELECT chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings WHERE chat_id = ?"
   );
   const stmtUpsertChat = db.prepare(`
-    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(chat_id) DO UPDATE SET
       provider_id=excluded.provider_id,
       auto_reply=excluded.auto_reply,
       reply_style=excluded.reply_style,
+      global_persona_enabled=excluded.global_persona_enabled,
+      global_persona_user_id=excluded.global_persona_user_id,
+      global_persona_reply_limit=excluded.global_persona_reply_limit,
+      global_persona_reply_count=excluded.global_persona_reply_count,
       chat_type=excluded.chat_type,
       title=excluded.title,
       username=excluded.username,
@@ -184,7 +216,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
       updated_at=excluded.updated_at
   `);
   const stmtListChats = db.prepare(
-    "SELECT chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings"
+    "SELECT chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings"
   );
 
   const stmtGetConv = db.prepare(`
@@ -284,20 +316,22 @@ export async function createSqliteStateStore({ logger, configStore }) {
   `);
   const stmtGetUserProfile = db.prepare(`
     SELECT user_id, username, first_name, last_name, display_name_mode, custom_display_name,
-      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+      custom_persona, custom_persona_enabled, custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
     FROM user_profiles WHERE user_id = ?
   `);
   const stmtUpsertUserProfile = db.prepare(`
     INSERT INTO user_profiles (
       user_id, username, first_name, last_name, display_name_mode, custom_display_name,
-      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      custom_persona, custom_persona_enabled, custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       username=excluded.username,
       first_name=excluded.first_name,
       last_name=excluded.last_name,
       display_name_mode=excluded.display_name_mode,
       custom_display_name=excluded.custom_display_name,
+      custom_persona=excluded.custom_persona,
+      custom_persona_enabled=excluded.custom_persona_enabled,
       custom_prompt_1=excluded.custom_prompt_1,
       custom_prompt_2=excluded.custom_prompt_2,
       active_prompt_slot=excluded.active_prompt_slot,
@@ -306,7 +340,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
   `);
   const stmtListUserProfiles = db.prepare(`
     SELECT user_id, username, first_name, last_name, display_name_mode, custom_display_name,
-      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+      custom_persona, custom_persona_enabled, custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
     FROM user_profiles
   `);
 
@@ -321,6 +355,10 @@ export async function createSqliteStateStore({ logger, configStore }) {
           providerId: String(r.provider_id || ""),
           autoReply: Boolean(Number(r.auto_reply || 0)),
           replyStyle: normalizeOptionalChatReplyStyle(r.reply_style),
+          globalPersonaEnabled: Boolean(Number(r.global_persona_enabled || 0)),
+          globalPersonaUserId: String(r.global_persona_user_id || ""),
+          globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(r.global_persona_reply_limit),
+          globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(r.global_persona_reply_count),
           createdAt: Number(r.created_at || 0),
           updatedAt: Number(r.updated_at || 0)
         };
@@ -351,6 +389,8 @@ export async function createSqliteStateStore({ logger, configStore }) {
               lastName: String(r.last_name || ""),
               displayNameMode: normalizeUserDisplayNameMode(r.display_name_mode),
               customDisplayName: String(r.custom_display_name || ""),
+              customPersona: String(r.custom_persona || ""),
+              customPersonaEnabled: normalizeBool(r.custom_persona_enabled, false),
               customPrompt1: String(r.custom_prompt_1 || ""),
               customPrompt2: String(r.custom_prompt_2 || ""),
               activePromptSlot: normalizeUserPromptSlot(r.active_prompt_slot),
@@ -392,6 +432,10 @@ export async function createSqliteStateStore({ logger, configStore }) {
           providerId: String(row.provider_id || ""),
           autoReply: Boolean(Number(row.auto_reply || 0)),
           replyStyle: normalizeOptionalChatReplyStyle(row.reply_style),
+          globalPersonaEnabled: Boolean(Number(row.global_persona_enabled || 0)),
+          globalPersonaUserId: String(row.global_persona_user_id || ""),
+          globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(row.global_persona_reply_limit),
+          globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(row.global_persona_reply_count),
           chatType: String(row.chat_type || ""),
           title: String(row.title || ""),
           username: String(row.username || ""),
@@ -401,11 +445,15 @@ export async function createSqliteStateStore({ logger, configStore }) {
         };
       }
       const ts = nowMs();
-      stmtUpsertChat.run(key, "", 0, "", "", "", "", 0, ts, ts);
+      stmtUpsertChat.run(key, "", 0, "", 0, "", 100, 0, "", "", "", 0, ts, ts);
       return {
         providerId: "",
         autoReply: false,
         replyStyle: "",
+        globalPersonaEnabled: false,
+        globalPersonaUserId: "",
+        globalPersonaReplyLimit: 100,
+        globalPersonaReplyCount: 0,
         chatType: "",
         title: "",
         username: "",
@@ -425,6 +473,10 @@ export async function createSqliteStateStore({ logger, configStore }) {
         String(current.providerId || ""),
         current.autoReply ? 1 : 0,
         normalizeOptionalChatReplyStyle(current.replyStyle),
+        current.globalPersonaEnabled ? 1 : 0,
+        String(current.globalPersonaUserId || ""),
+        normalizeGlobalPersonaReplyLimit(current.globalPersonaReplyLimit),
+        normalizeGlobalPersonaReplyCount(current.globalPersonaReplyCount),
         String(current.chatType || ""),
         String(current.title || ""),
         String(current.username || ""),
@@ -449,6 +501,10 @@ export async function createSqliteStateStore({ logger, configStore }) {
         String(current.providerId || ""),
         current.autoReply ? 1 : 0,
         normalizeOptionalChatReplyStyle(current.replyStyle),
+        current.globalPersonaEnabled ? 1 : 0,
+        String(current.globalPersonaUserId || ""),
+        normalizeGlobalPersonaReplyLimit(current.globalPersonaReplyLimit),
+        normalizeGlobalPersonaReplyCount(current.globalPersonaReplyCount),
         String(current.chatType || ""),
         String(current.title || ""),
         String(current.username || ""),
@@ -467,7 +523,11 @@ export async function createSqliteStateStore({ logger, configStore }) {
         lastSeenAt: Number(r.last_seen_at || 0),
         providerId: String(r.provider_id || ""),
         autoReply: Boolean(Number(r.auto_reply || 0)),
-        replyStyle: normalizeOptionalChatReplyStyle(r.reply_style)
+        replyStyle: normalizeOptionalChatReplyStyle(r.reply_style),
+        globalPersonaEnabled: Boolean(Number(r.global_persona_enabled || 0)),
+        globalPersonaUserId: String(r.global_persona_user_id || ""),
+        globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(r.global_persona_reply_limit),
+        globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(r.global_persona_reply_count)
       }));
       items.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
       return items;
@@ -478,13 +538,15 @@ export async function createSqliteStateStore({ logger, configStore }) {
       const row = stmtGetUserProfile.get(key);
       if (row) return rowToUserProfile(row);
       const ts = nowMs();
-      stmtUpsertUserProfile.run(key, "", "", "", "username", "", "", "", "", 0, ts, ts);
+      stmtUpsertUserProfile.run(key, "", "", "", "username", "", "", 0, "", "", "", 0, ts, ts);
       return {
         username: "",
         firstName: "",
         lastName: "",
         displayNameMode: "username",
         customDisplayName: "",
+        customPersona: "",
+        customPersonaEnabled: false,
         customPrompt1: "",
         customPrompt2: "",
         activePromptSlot: "",
@@ -498,6 +560,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
       if (!key) return defaultUserProfile();
       const current = store.getUserProfile(key);
       updater(current);
+      normalizeUserProfileState(current);
       const ts = nowMs();
       current.updatedAt = ts;
       stmtUpsertUserProfile.run(
@@ -507,6 +570,8 @@ export async function createSqliteStateStore({ logger, configStore }) {
         String(current.lastName || ""),
         normalizeUserDisplayNameMode(current.displayNameMode),
         String(current.customDisplayName || ""),
+        String(current.customPersona || ""),
+        normalizeBool(current.customPersonaEnabled, false) ? 1 : 0,
         String(current.customPrompt1 || ""),
         String(current.customPrompt2 || ""),
         normalizeUserPromptSlot(current.activePromptSlot),
@@ -526,6 +591,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
       current.firstName = String(m.firstName ?? current.firstName ?? "");
       current.lastName = String(m.lastName ?? current.lastName ?? "");
       current.lastSeenAt = ts;
+      normalizeUserProfileState(current);
       current.updatedAt = ts;
       stmtUpsertUserProfile.run(
         key,
@@ -534,6 +600,8 @@ export async function createSqliteStateStore({ logger, configStore }) {
         String(current.lastName || ""),
         normalizeUserDisplayNameMode(current.displayNameMode),
         String(current.customDisplayName || ""),
+        String(current.customPersona || ""),
+        normalizeBool(current.customPersonaEnabled, false) ? 1 : 0,
         String(current.customPrompt1 || ""),
         String(current.customPrompt2 || ""),
         normalizeUserPromptSlot(current.activePromptSlot),
@@ -551,10 +619,13 @@ export async function createSqliteStateStore({ logger, configStore }) {
         lastName: String(r.last_name || ""),
         displayNameMode: normalizeUserDisplayNameMode(r.display_name_mode),
         customDisplayName: String(r.custom_display_name || ""),
+        customPersona: String(r.custom_persona || ""),
+        customPersonaEnabled: normalizeBool(r.custom_persona_enabled, false),
         customPrompt1: String(r.custom_prompt_1 || ""),
         customPrompt2: String(r.custom_prompt_2 || ""),
         activePromptSlot: normalizeUserPromptSlot(r.active_prompt_slot),
         lastSeenAt: Number(r.last_seen_at || 0),
+        hasPersona: Boolean(String(r.custom_persona || "").trim()),
         hasPrompt1: Boolean(String(r.custom_prompt_1 || "").trim()),
         hasPrompt2: Boolean(String(r.custom_prompt_2 || "").trim())
       }));
@@ -785,19 +856,21 @@ function rowToConversation(row) {
 }
 
 function rowToUserProfile(row) {
-  return {
+  return normalizeUserProfileState({
     username: String(row.username || ""),
     firstName: String(row.first_name || ""),
     lastName: String(row.last_name || ""),
     displayNameMode: normalizeUserDisplayNameMode(row.display_name_mode),
     customDisplayName: String(row.custom_display_name || ""),
+    customPersona: String(row.custom_persona || ""),
+    customPersonaEnabled: normalizeBool(row.custom_persona_enabled, false),
     customPrompt1: String(row.custom_prompt_1 || ""),
     customPrompt2: String(row.custom_prompt_2 || ""),
     activePromptSlot: normalizeUserPromptSlot(row.active_prompt_slot),
     lastSeenAt: Number(row.last_seen_at || 0),
     createdAt: Number(row.created_at || 0),
     updatedAt: Number(row.updated_at || 0)
-  };
+  });
 }
 
 function safeParseJsonArray(s) {
@@ -825,12 +898,16 @@ function tryMigrateFromJson({ logger, configStore, db }) {
   const jsonState = loadJsonState(statePath);
   const upMeta = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
   const upChat = db.prepare(`
-    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(chat_id) DO UPDATE SET
       provider_id=excluded.provider_id,
       auto_reply=excluded.auto_reply,
       reply_style=excluded.reply_style,
+      global_persona_enabled=excluded.global_persona_enabled,
+      global_persona_user_id=excluded.global_persona_user_id,
+      global_persona_reply_limit=excluded.global_persona_reply_limit,
+      global_persona_reply_count=excluded.global_persona_reply_count,
       chat_type=excluded.chat_type,
       title=excluded.title,
       username=excluded.username,
@@ -854,14 +931,16 @@ function tryMigrateFromJson({ logger, configStore, db }) {
   const upUser = db.prepare(`
     INSERT INTO user_profiles (
       user_id, username, first_name, last_name, display_name_mode, custom_display_name,
-      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      custom_persona, custom_persona_enabled, custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       username=excluded.username,
       first_name=excluded.first_name,
       last_name=excluded.last_name,
       display_name_mode=excluded.display_name_mode,
       custom_display_name=excluded.custom_display_name,
+      custom_persona=excluded.custom_persona,
+      custom_persona_enabled=excluded.custom_persona_enabled,
       custom_prompt_1=excluded.custom_prompt_1,
       custom_prompt_2=excluded.custom_prompt_2,
       active_prompt_slot=excluded.active_prompt_slot,
@@ -876,6 +955,10 @@ function tryMigrateFromJson({ logger, configStore, db }) {
         String(chat?.providerId || ""),
         chat?.autoReply ? 1 : 0,
         normalizeOptionalChatReplyStyle(chat?.replyStyle),
+        chat?.globalPersonaEnabled ? 1 : 0,
+        String(chat?.globalPersonaUserId || ""),
+        normalizeGlobalPersonaReplyLimit(chat?.globalPersonaReplyLimit),
+        normalizeGlobalPersonaReplyCount(chat?.globalPersonaReplyCount),
         String(chat?.chatType || ""),
         String(chat?.title || ""),
         String(chat?.username || ""),
@@ -908,6 +991,8 @@ function tryMigrateFromJson({ logger, configStore, db }) {
         String(profile?.lastName || ""),
         normalizeUserDisplayNameMode(profile?.displayNameMode),
         String(profile?.customDisplayName || ""),
+        String(profile?.customPersona || ""),
+        normalizeBool(profile?.customPersonaEnabled, false) ? 1 : 0,
         String(profile?.customPrompt1 || ""),
         String(profile?.customPrompt2 || ""),
         normalizeUserPromptSlot(profile?.activePromptSlot),

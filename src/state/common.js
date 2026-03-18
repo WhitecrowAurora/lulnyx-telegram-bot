@@ -9,6 +9,10 @@ export function defaultChatSettings() {
     providerId: "",
     autoReply: false,
     replyStyle: "",
+    globalPersonaEnabled: false,
+    globalPersonaUserId: "",
+    globalPersonaReplyLimit: 100,
+    globalPersonaReplyCount: 0,
     chatType: "",
     title: "",
     username: "",
@@ -39,6 +43,8 @@ export function defaultUserProfile() {
     lastName: "",
     displayNameMode: "username",
     customDisplayName: "",
+    customPersona: "",
+    customPersonaEnabled: false,
     customPrompt1: "",
     customPrompt2: "",
     activePromptSlot: "",
@@ -73,6 +79,14 @@ export function normalizeOptionalChatReplyStyle(value) {
   return CHAT_REPLY_STYLES.has(style) ? style : "";
 }
 
+export function normalizeGlobalPersonaReplyLimit(value) {
+  return clampInt(value, 0, 1000000);
+}
+
+export function normalizeGlobalPersonaReplyCount(value) {
+  return clampInt(value, 0, 1000000000);
+}
+
 export function getEffectiveChatReplyStyle({ cfg, chatSettings }) {
   const explicit = normalizeOptionalChatReplyStyle(chatSettings?.replyStyle);
   if (explicit) return explicit;
@@ -98,9 +112,48 @@ export function clampText(value, maxLen) {
   return raw.length > lim ? raw.slice(0, lim) : raw;
 }
 
+export function normalizeBool(value, fallback = false) {
+  if (value === true || value === false) return value;
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "true" || text === "1" || text === "on" || text === "yes") return true;
+  if (text === "false" || text === "0" || text === "off" || text === "no") return false;
+  return Boolean(fallback);
+}
+
+export function getActiveUserPersona(profile) {
+  const enabled = normalizeBool(profile?.customPersonaEnabled, false);
+  const text = clampText(profile?.customPersona, 12000);
+  return enabled && text ? { enabled: true, text } : { enabled: false, text: "" };
+}
+
 export function getActiveUserPrompt(profile) {
   const slot = normalizeUserPromptSlot(profile?.activePromptSlot);
   if (slot === "slot1") return { slot, text: clampText(profile?.customPrompt1, 12000) };
   if (slot === "slot2") return { slot, text: clampText(profile?.customPrompt2, 12000) };
   return { slot: "", text: "" };
+}
+
+export function normalizeUserProfileState(profile) {
+  const base = profile && typeof profile === "object" ? profile : defaultUserProfile();
+  const defaults = defaultUserProfile();
+  base.username = String(base.username || "");
+  base.firstName = String(base.firstName || "");
+  base.lastName = String(base.lastName || "");
+  base.displayNameMode = normalizeUserDisplayNameMode(base.displayNameMode);
+  base.customDisplayName = clampText(base.customDisplayName, 64);
+  if (!base.customDisplayName && base.displayNameMode === "custom") base.displayNameMode = "username";
+
+  base.customPersona = clampText(base.customPersona, 12000);
+  base.customPersonaEnabled = normalizeBool(base.customPersonaEnabled, false) && Boolean(base.customPersona);
+
+  base.customPrompt1 = clampText(base.customPrompt1, 12000);
+  base.customPrompt2 = clampText(base.customPrompt2, 12000);
+  base.activePromptSlot = normalizeUserPromptSlot(base.activePromptSlot);
+  if (base.activePromptSlot === "slot1" && !base.customPrompt1) base.activePromptSlot = "";
+  if (base.activePromptSlot === "slot2" && !base.customPrompt2) base.activePromptSlot = "";
+
+  base.lastSeenAt = Number(base.lastSeenAt || 0);
+  base.createdAt = Number(base.createdAt || defaults.createdAt);
+  base.updatedAt = Number(base.updatedAt || defaults.updatedAt);
+  return base;
 }

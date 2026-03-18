@@ -2,8 +2,7 @@ import { sleep } from "./util.js";
 import { createTelegramApi } from "./telegramApi.js";
 import { handleIncomingText, handleCallbackQuery } from "./chat.js";
 import { bt, getTelegramCommands } from "./botI18n.js";
-import { getEffectiveChatReplyStyle, normalizeChatReplyStyle } from "./state/common.js";
-import { resolvePreferredUserLabel } from "./chat/userProfile.js";
+import { clampText, getEffectiveChatReplyStyle, normalizeChatReplyStyle } from "./state/common.js";
 
 const TELEGRAM_MAX_MESSAGE = 4096;
 const KNOWN_COMMANDS = new Set([...getTelegramCommands("en").map((c) => c.command), "start"]);
@@ -230,6 +229,7 @@ async function handleMessage({ logger, api, configStore, stateStore, message, id
     const isGroup = chatType === "group" || chatType === "supergroup";
     const autoReply = Boolean(chatSettings?.autoReply) || Boolean(cfg.telegram?.autoReplyByDefault);
     if (!isGroup || !autoReply) return;
+    if (chatSettings?.globalPersonaEnabled === true && !canUseGroupGlobalPersona({ chatSettings, chatType, stateStore })) return;
     if (hasMedia(message)) return;
     if (hasUrlEntity(message)) return;
   }
@@ -257,8 +257,7 @@ async function handleMessage({ logger, api, configStore, stateStore, message, id
     chatType,
     message,
     userId,
-    replyStyle: getEffectiveChatReplyStyle({ cfg, chatSettings }),
-    userProfile: stateStore.getUserProfile?.(userId) || null
+    replyStyle: getEffectiveChatReplyStyle({ cfg, chatSettings })
   });
 
   if (typeof reply === "object" && reply) {
@@ -324,6 +323,19 @@ async function handleMessage({ logger, api, configStore, stateStore, message, id
     });
     first = false;
   }
+}
+
+function canUseGroupGlobalPersona({ chatSettings, chatType, stateStore }) {
+  const type = String(chatType || chatSettings?.chatType || "").trim();
+  if (type !== "group" && type !== "supergroup") return false;
+  if (chatSettings?.globalPersonaEnabled !== true) return false;
+  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
+  if (!ownerUserId) return false;
+  const limit = Math.max(0, Math.trunc(Number(chatSettings?.globalPersonaReplyLimit || 0) || 0));
+  const count = Math.max(0, Math.trunc(Number(chatSettings?.globalPersonaReplyCount || 0) || 0));
+  if (limit > 0 && count >= limit) return false;
+  const ownerProfile = stateStore.getUserProfile?.(ownerUserId) || null;
+  return Boolean(clampText(ownerProfile?.customPersona, 12000));
 }
 
 async function handleCb({ logger, api, configStore, stateStore, callbackQuery, lastNotAllowedNoticeAt }) {
@@ -610,32 +622,17 @@ function hasMedia(message) {
   );
 }
 
-function buildReplyBinding({ chatType, message, userId, replyStyle, userProfile }) {
+function buildReplyBinding({ chatType, message, userId, replyStyle }) {
   if (!isGroupChat(chatType)) return { replyToMessageId: undefined, prefix: "", htmlPrefix: "" };
   const style = normalizeChatReplyStyle(replyStyle);
   const replyToMessageId = style === "mention_only" ? undefined : Number(message?.message_id || 0) || undefined;
   if (style === "reply_only") return { replyToMessageId, prefix: "", htmlPrefix: "" };
-  const preferredLabel = resolvePreferredUserLabel({
-    sender: {
-      username: message?.from?.username ?? message?.sender_chat?.username,
-      firstName: message?.from?.first_name ?? message?.sender_chat?.title,
-      lastName: message?.from?.last_name
-    },
-    profile: userProfile,
-    withAt: true
-  });
-  if (String(userProfile?.displayNameMode || "") === "custom") {
-    if (preferredLabel) return { replyToMessageId, prefix: `${preferredLabel} `, htmlPrefix: "" };
-  }
   const username = String(message?.from?.username ?? message?.sender_chat?.username ?? "").trim();
   if (username) return { replyToMessageId, prefix: `@${username} `, htmlPrefix: "" };
 
   const firstName = String(message?.from?.first_name ?? message?.sender_chat?.title ?? "").trim();
   const lastName = String(message?.from?.last_name ?? "").trim();
   const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
-  if (preferredLabel && preferredLabel !== `@${username}` && preferredLabel !== fullName) {
-    return { replyToMessageId, prefix: `${preferredLabel} `, htmlPrefix: "" };
-  }
   if (fullName) {
     const numericUserId = Number(userId || 0);
     if (Number.isFinite(numericUserId) && numericUserId > 0 && message?.from && !message?.sender_chat) {

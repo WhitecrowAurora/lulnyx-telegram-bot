@@ -1,8 +1,22 @@
-export function buildSystemPrompt({ promptSystem, personaSystem, userPrompt, chatInfo, rules, facts, summaryText, longTermMemory, longTermPersona }) {
+export function buildSystemPrompt({
+  promptSystem,
+  personaSystem,
+  userPersona,
+  userPrompt,
+  preferredAddressingName,
+  chatInfo,
+  rules,
+  facts,
+  summaryText,
+  longTermMemory,
+  longTermPersona
+}) {
   const parts = [];
   const p = String(promptSystem || "").trim();
   const persona = String(personaSystem || "").trim();
+  const userPersonaText = String(userPersona || "").trim();
   const user = String(userPrompt || "").trim();
+  const addressingName = String(preferredAddressingName || "").trim();
   const info = String(chatInfo || "").trim();
   const rs = Array.isArray(rules) ? rules.map((x) => String(x)).filter(Boolean) : [];
   const fs = Array.isArray(facts) ? facts.map((x) => String(x)).filter(Boolean) : [];
@@ -12,7 +26,11 @@ export function buildSystemPrompt({ promptSystem, personaSystem, userPrompt, cha
 
   if (p) parts.push(p);
   if (persona) parts.push(persona);
+  if (userPersonaText) parts.push(`### Per-user persona\n${userPersonaText}`);
   if (user) parts.push(`### Per-user prompt\n${user}`);
+  if (addressingName) {
+    parts.push(`### User addressing\nWhen directly addressing the user, call them "${addressingName}". Do not use any other name for them.`);
+  }
   if (info) parts.push(`### Chat info\n${info}`);
   if (rs.length) parts.push(`### Rules\n${rs.map((r) => `- ${r}`).join("\n")}`);
   if (fs.length) parts.push(`### Memory facts\n${fs.map((f) => `- ${f}`).join("\n")}`);

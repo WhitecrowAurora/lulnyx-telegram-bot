@@ -8,7 +8,10 @@ import { getAuth, verifyWebLogin } from "./web/auth.js";
 import { buildConfigSummary, buildDiagnostics, buildSetupConfig, isMaskedOrBlank, maskConfig, mergeSecrets, normalizePostedConfig, secretMask } from "./web/config.js";
 import {
   clampText,
+  getActiveUserPersona,
   getEffectiveChatReplyStyle,
+  normalizeUserProfileState,
+  normalizeBool,
   normalizeOptionalChatReplyStyle,
   normalizeUserDisplayNameMode,
   normalizeUserPromptSlot
@@ -19,6 +22,41 @@ import { createRateLimiter } from "./web/rateLimiter.js";
 import { makeCspNonce, setSecurityHeaders } from "./web/security.js";
 
 const SECRET_MASK = secretMask();
+
+function clearConversationHistoryByKey(stateStore, key) {
+  if (!key) return;
+  stateStore.updateConversationByKey(key, (conv) => {
+    conv.history = [];
+    conv.summaryText = "";
+    conv.summaryUpdatedAt = 0;
+  });
+}
+
+function clearConversationHistoryForUser(stateStore, userId) {
+  const uid = String(userId || "").trim();
+  if (!uid || !stateStore?.listConversationKeys) return false;
+  let changed = false;
+  for (const key of stateStore.listConversationKeys()) {
+    const value = String(key || "");
+    if (value !== uid && !value.endsWith(`:${uid}`)) continue;
+    clearConversationHistoryByKey(stateStore, value);
+    changed = true;
+  }
+  return changed;
+}
+
+function clearConversationHistoryForChat(stateStore, chatId) {
+  const target = String(chatId || "").trim();
+  if (!target || !stateStore?.listConversationKeys) return false;
+  let changed = false;
+  for (const key of stateStore.listConversationKeys()) {
+    const value = String(key || "");
+    if (value !== target && !value.startsWith(`${target}:`)) continue;
+    clearConversationHistoryByKey(stateStore, value);
+    changed = true;
+  }
+  return changed;
+}
 
 function getEffectiveChatProvider(cfg, chatSettings) {
   const providers = Array.isArray(cfg?.providers) ? cfg.providers : [];
@@ -395,12 +433,18 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
   if (method === "GET" && pathname === "/api/known-chats") {
     const items = stateStore.listKnownChats().map((item) => {
       const provider = getEffectiveChatProvider(cfg, item);
+      const ownerUserId = String(item?.globalPersonaUserId || "").trim();
+      const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
+      const ownerDisplay = ownerUserId
+        ? String(ownerProfile?.customDisplayName || ownerProfile?.username || ownerProfile?.firstName || ownerUserId).trim() || ownerUserId
+        : "";
       return {
         ...item,
         replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: item }),
         providerEffective: provider.providerId,
         providerNameEffective: provider.providerName,
-        providerInherited: provider.inherited
+        providerInherited: provider.inherited,
+        globalPersonaOwnerDisplay: ownerDisplay
       };
     });
     return sendJson(res, 200, { items });
@@ -419,11 +463,13 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
     if (!userId) return sendJson(res, 400, { error: "userId_required" });
     const profile = stateStore.getUserProfile?.(userId);
     if (!profile) return sendJson(res, 404, { error: "not_found" });
+    normalizeUserProfileState(profile);
     return sendJson(res, 200, {
       userId,
       profile: {
         ...profile,
         displayNameMode: normalizeUserDisplayNameMode(profile.displayNameMode),
+        customPersonaEnabled: normalizeBool(profile.customPersonaEnabled, false),
         activePromptSlot: normalizeUserPromptSlot(profile.activePromptSlot)
       }
     });
@@ -440,20 +486,38 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
     const userId = String(body?.userId || "").trim();
     if (!userId) return sendJson(res, 400, { error: "userId_required" });
     const patch = body?.patch && typeof body.patch === "object" ? body.patch : {};
+    const before = stateStore.getUserProfile?.(userId) || null;
+    const prevActivePromptSlot = normalizeUserPromptSlot(before?.activePromptSlot);
+    const prevPrompt1 = String(before?.customPrompt1 || "");
+    const prevPrompt2 = String(before?.customPrompt2 || "");
+    const prevActivePersona = getActiveUserPersona(before);
     const saved = stateStore.updateUserProfile?.(userId, (p) => {
       if (patch.displayNameMode !== undefined) p.displayNameMode = normalizeUserDisplayNameMode(patch.displayNameMode);
       if (patch.customDisplayName !== undefined) p.customDisplayName = clampText(patch.customDisplayName, 64);
+      if (patch.customPersona !== undefined) p.customPersona = clampText(patch.customPersona, 12000);
+      if (patch.customPersonaEnabled !== undefined) p.customPersonaEnabled = normalizeBool(patch.customPersonaEnabled, p.customPersonaEnabled);
       if (patch.customPrompt1 !== undefined) p.customPrompt1 = clampText(patch.customPrompt1, 12000);
       if (patch.customPrompt2 !== undefined) p.customPrompt2 = clampText(patch.customPrompt2, 12000);
       if (patch.activePromptSlot !== undefined) p.activePromptSlot = normalizeUserPromptSlot(patch.activePromptSlot);
+      normalizeUserProfileState(p);
     });
+    const nextActivePromptSlot = normalizeUserPromptSlot(saved?.activePromptSlot);
+    const promptChanged =
+      prevActivePromptSlot !== nextActivePromptSlot ||
+      (prevActivePromptSlot === "slot1" && prevPrompt1 !== String(saved?.customPrompt1 || "")) ||
+      (prevActivePromptSlot === "slot2" && prevPrompt2 !== String(saved?.customPrompt2 || ""));
+    const nextActivePersona = getActiveUserPersona(saved);
+    const personaChanged = prevActivePersona.enabled !== nextActivePersona.enabled || (nextActivePersona.enabled && prevActivePersona.text !== nextActivePersona.text);
+    const contextReset = (promptChanged || personaChanged) && clearConversationHistoryForUser(stateStore, userId);
     await stateStore.flush?.();
     return sendJson(res, 200, {
       ok: true,
       userId,
+      contextReset,
       profile: {
         ...saved,
         displayNameMode: normalizeUserDisplayNameMode(saved?.displayNameMode),
+        customPersonaEnabled: normalizeBool(saved?.customPersonaEnabled, false),
         activePromptSlot: normalizeUserPromptSlot(saved?.activePromptSlot)
       }
     });
@@ -496,11 +560,16 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
     const chatId = String(url.searchParams.get("chatId") || "");
     if (!chatId) return sendJson(res, 400, { error: "chatId_required" });
     const settings = stateStore.getChatSettings(chatId);
+    const ownerUserId = String(settings?.globalPersonaUserId || "").trim();
+    const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
     return sendJson(res, 200, {
       chatId,
       settings: {
         ...settings,
-        replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: settings })
+        replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: settings }),
+        globalPersonaOwnerDisplay: ownerUserId
+          ? String(ownerProfile?.customDisplayName || ownerProfile?.username || ownerProfile?.firstName || ownerUserId).trim() || ownerUserId
+          : ""
       }
     });
   }
@@ -516,17 +585,42 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
     const chatId = String(body?.chatId || "");
     if (!chatId) return sendJson(res, 400, { error: "chatId_required" });
     const patch = body?.patch && typeof body.patch === "object" ? body.patch : {};
+    const before = stateStore.getChatSettings(chatId);
+    if (patch.globalPersonaEnabled === true && !String(patch.globalPersonaUserId ?? before?.globalPersonaUserId ?? "").trim()) {
+      return sendJson(res, 400, { error: "global_persona_user_id_required" });
+    }
     const saved = stateStore.updateChatSettings(chatId, (c) => {
       if (patch.autoReply !== undefined) c.autoReply = Boolean(patch.autoReply);
       if (patch.replyStyle !== undefined) c.replyStyle = normalizeOptionalChatReplyStyle(patch.replyStyle);
+      if (patch.globalPersonaEnabled !== undefined) c.globalPersonaEnabled = Boolean(patch.globalPersonaEnabled);
+      if (patch.globalPersonaUserId !== undefined) c.globalPersonaUserId = String(patch.globalPersonaUserId || "").trim();
+      if (patch.globalPersonaReplyLimit !== undefined) {
+        const limit = Math.max(0, Math.min(1000000, Math.trunc(Number(patch.globalPersonaReplyLimit) || 0)));
+        c.globalPersonaReplyLimit = limit;
+      }
+      if (patch.resetGlobalPersonaReplyCount === true) c.globalPersonaReplyCount = 0;
+      const ownerChanged = String(before?.globalPersonaUserId || "").trim() !== String(c.globalPersonaUserId || "").trim();
+      const enabledChanged = Boolean(before?.globalPersonaEnabled) !== Boolean(c.globalPersonaEnabled);
+      if (ownerChanged) c.globalPersonaReplyCount = 0;
+      if (enabledChanged && c.globalPersonaEnabled !== true) c.globalPersonaReplyCount = 0;
     });
+    const personaModeChanged =
+      Boolean(before?.globalPersonaEnabled) !== Boolean(saved?.globalPersonaEnabled) ||
+      String(before?.globalPersonaUserId || "").trim() !== String(saved?.globalPersonaUserId || "").trim();
+    const contextReset = personaModeChanged && clearConversationHistoryForChat(stateStore, chatId);
     await stateStore.flush?.();
+    const ownerUserId = String(saved?.globalPersonaUserId || "").trim();
+    const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
     return sendJson(res, 200, {
       ok: true,
       chatId,
+      contextReset,
       settings: {
         ...saved,
-        replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: saved })
+        replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: saved }),
+        globalPersonaOwnerDisplay: ownerUserId
+          ? String(ownerProfile?.customDisplayName || ownerProfile?.username || ownerProfile?.firstName || ownerUserId).trim() || ownerUserId
+          : ""
       }
     });
   }

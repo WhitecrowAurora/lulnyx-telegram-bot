@@ -108,6 +108,8 @@ textarea{min-height:380px;font-family:var(--mono);font-size:13px;line-height:1.3
 .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;border:1px solid var(--border);
   background:var(--surface1);color:var(--muted);font-size:12px
 }
+.pill.warn{border-color:rgba(var(--accentRgb),.45);background:rgba(var(--accentRgb),.12);color:var(--text)}
+.pill.ok{border-color:rgba(49,208,170,.45);background:rgba(49,208,170,.10);color:var(--text)}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
 .tab{padding:8px 10px;border-radius:12px;border:1px solid var(--border);background:var(--surface1);cursor:pointer}
 .tab[aria-selected="true"]{background:rgba(var(--accentRgb),.14);border-color:rgba(var(--accentRgb),.45);color:var(--text)}

@@ -2,7 +2,24 @@ import { clamp } from "../util.js";
 import { searxngImageSearch, searxngSearch } from "../search.js";
 import { bt } from "../botI18n.js";
 import { menuMarkup, menuText } from "./menu.js";
-import { clampText, getActiveUserPrompt, getEffectiveChatReplyStyle, normalizeUserDisplayNameMode, normalizeUserPromptSlot } from "../state/common.js";
+import {
+  clampText,
+  getActiveUserPersona,
+  getActiveUserPrompt,
+  getEffectiveChatReplyStyle,
+  normalizeUserDisplayNameMode,
+  normalizeUserPromptSlot
+} from "../state/common.js";
+
+function maybeClearConversationHistory({ changed, stateStore, chatId, userId, chatType }) {
+  if (!changed) return false;
+  clearConversationHistory({ stateStore, chatId, userId, chatType });
+  return true;
+}
+
+function withHistoryResetNotice(text, didReset, t) {
+  return didReset ? `${text}\n${t("notice.history_reset")}` : text;
+}
 
 export async function handleCommand({ logger, configStore, stateStore, chatId, userId, chatType, lang, command, args }) {
   const t = (key, vars) => bt(lang, key, vars);
@@ -28,6 +45,7 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     const factsCount = Array.isArray(conv.facts) ? conv.facts.length : 0;
     const historyCount = Array.isArray(conv.history) ? conv.history.length : 0;
     const activePrompt = getActiveUserPrompt(userProfile);
+    const activePersona = getActiveUserPersona(userProfile);
     return [
       t("status.title"),
       `${t("status.provider")}: ${providerId}`,
@@ -38,6 +56,8 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
       `${t("status.name_mode")}: ${t(`profile.name_mode_${normalizeUserDisplayNameMode(userProfile?.displayNameMode)}`)}`,
       `${t("status.custom_name")}: ${String(userProfile?.customDisplayName || "").trim() || t("profile.custom_name_empty")}`,
       `${t("status.user_prompt")}: ${activePrompt.slot ? t(`profile.user_prompt_${activePrompt.slot}`) : t("profile.user_prompt_off")}`,
+      `${t("status.user_persona")}: ${describePersonaState({ t, profile: userProfile, activePersona })}`,
+      ...(isGroupChatType(chatType) ? [`${t("status.global_persona")}: ${describeGlobalPersonaStatus({ t, stateStore, chatSettings })}`] : []),
       `${t("status.facts")}: ${factsCount}`,
       `${t("status.history")}: ${historyCount}`
     ].join("\n");
@@ -132,8 +152,10 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     if (!targetId) return listPrompts(cfg, conv, cfg.defaultPromptId, lang);
     const exists = cfg.prompts.some((p) => p.id === targetId);
     if (!exists) return `${t("prompts.unknown", { id: targetId })}\n\n${listPrompts(cfg, conv, cfg.defaultPromptId, lang)}`;
+    const changed = (conv.promptId || cfg.defaultPromptId || "") !== targetId;
     stateStore.updateConversation({ chatId, userId, chatType }, (c) => (c.promptId = targetId));
-    return t("prompts.set", { id: targetId });
+    const didReset = maybeClearConversationHistory({ changed, stateStore, chatId, userId, chatType });
+    return withHistoryResetNotice(t("prompts.set", { id: targetId }), didReset, t);
   }
 
   if (command === "persona") {
@@ -142,8 +164,10 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     const exists = cfg.personas.some((p) => p.id === targetId);
     if (!exists)
       return `${t("personas.unknown", { id: targetId })}\n\n${listPersonas(cfg, conv, cfg.defaultPersonaId, lang)}`;
+    const changed = (conv.personaId || cfg.defaultPersonaId || "") !== targetId;
     stateStore.updateConversation({ chatId, userId, chatType }, (c) => (c.personaId = targetId));
-    return t("personas.set", { id: targetId });
+    const didReset = maybeClearConversationHistory({ changed, stateStore, chatId, userId, chatType });
+    return withHistoryResetNotice(t("personas.set", { id: targetId }), didReset, t);
   }
 
   if (command === "reset") {
@@ -175,6 +199,66 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     if (!next) return t("usage.replystyle");
     stateStore.updateChatSettings(chatId, (c) => (c.replyStyle = next));
     return next ? t("replystyle.set", { mode: t(`replystyle.${next}`) }) : t("replystyle.set_default");
+  }
+
+  if (command === "globalpersona") {
+    if (!isGroupChatType(chatType)) return t("globalpersona.group_only");
+    const raw = String(args || "").trim();
+    if (!raw || raw.toLowerCase() === "status") return describeGlobalPersonaDetail({ t, stateStore, chatSettings });
+    const parts = raw.split(/\s+/).filter(Boolean);
+    const sub = String(parts[0] || "").toLowerCase();
+
+    if (sub === "on") {
+      const personaText = clampText(userProfile?.customPersona, 12000);
+      if (!personaText) return t("globalpersona.no_persona");
+      const nextLimit = parts[1] === undefined ? chatSettings?.globalPersonaReplyLimit : Number(parts[1]);
+      if (parts[1] !== undefined && (!Number.isFinite(nextLimit) || nextLimit < 0)) return t("usage.globalpersona");
+      const normalizedLimit = clamp(Math.trunc(Number(nextLimit ?? 100) || 0), 0, 1000000);
+      const prevEnabled = chatSettings?.globalPersonaEnabled === true;
+      const prevOwnerUserId = String(chatSettings?.globalPersonaUserId || "");
+      const changed = !prevEnabled || prevOwnerUserId !== String(userId);
+      stateStore.updateChatSettings(chatId, (c) => {
+        c.globalPersonaEnabled = true;
+        c.globalPersonaUserId = String(userId);
+        c.globalPersonaReplyLimit = normalizedLimit;
+        if (changed) c.globalPersonaReplyCount = 0;
+      });
+      if (changed) clearConversationHistoryForChat({ stateStore, chatId, chatType });
+      return withHistoryResetNotice(
+        `${t("globalpersona.enabled", { userId: String(userId), limit: formatLimitValue(t, normalizedLimit) })}\n${t("globalpersona.note_autoreply")}`,
+        changed,
+        t
+      );
+    }
+
+    if (sub === "off") {
+      const changed = chatSettings?.globalPersonaEnabled === true || String(chatSettings?.globalPersonaUserId || "").trim() !== "";
+      stateStore.updateChatSettings(chatId, (c) => {
+        c.globalPersonaEnabled = false;
+        c.globalPersonaUserId = "";
+        c.globalPersonaReplyCount = 0;
+      });
+      if (changed) clearConversationHistoryForChat({ stateStore, chatId, chatType });
+      return withHistoryResetNotice(t("globalpersona.disabled"), changed, t);
+    }
+
+    if (sub === "limit") {
+      const nextLimit = Number(parts[1]);
+      if (!Number.isFinite(nextLimit) || nextLimit < 0) return t("usage.globalpersona");
+      stateStore.updateChatSettings(chatId, (c) => {
+        c.globalPersonaReplyLimit = clamp(Math.trunc(nextLimit), 0, 1000000);
+      });
+      return t("globalpersona.limit_set", { limit: formatLimitValue(t, nextLimit) });
+    }
+
+    if (sub === "reset") {
+      stateStore.updateChatSettings(chatId, (c) => {
+        c.globalPersonaReplyCount = 0;
+      });
+      return t("globalpersona.count_reset");
+    }
+
+    return t("usage.globalpersona");
   }
 
   if (command === "myprofile") {
@@ -215,12 +299,17 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     if (!raw) return t(`usage.${command}`);
     const isClear = raw.toLowerCase() === "clear" || raw === "-";
     const value = isClear ? "" : clampText(raw, 12000);
+    const prevActiveSlot = normalizeUserPromptSlot(userProfile?.activePromptSlot);
+    const prevValue = slot === "slot1" ? String(userProfile?.customPrompt1 || "") : String(userProfile?.customPrompt2 || "");
     stateStore.updateUserProfile?.(userId, (p) => {
       if (slot === "slot1") p.customPrompt1 = value;
       else p.customPrompt2 = value;
       if (isClear && normalizeUserPromptSlot(p.activePromptSlot) === slot) p.activePromptSlot = "";
     });
-    return isClear ? t("profile.prompt_cleared", { slot: t(`profile.user_prompt_${slot}`) }) : t("profile.prompt_saved", { slot: t(`profile.user_prompt_${slot}`) });
+    const changed = prevActiveSlot === slot && prevValue !== value;
+    const didReset = maybeClearConversationHistory({ changed, stateStore, chatId, userId, chatType });
+    const message = isClear ? t("profile.prompt_cleared", { slot: t(`profile.user_prompt_${slot}`) }) : t("profile.prompt_saved", { slot: t(`profile.user_prompt_${slot}`) });
+    return withHistoryResetNotice(message, didReset, t);
   }
 
   if (command === "usemyprompt") {
@@ -229,10 +318,53 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     const allowed = new Set(["off", "1", "2", "slot1", "slot2"]);
     if (!allowed.has(raw)) return t("usage.usemyprompt");
     const slot = normalizeUserPromptSlot(raw);
+    const changed = normalizeUserPromptSlot(userProfile?.activePromptSlot) !== slot;
     stateStore.updateUserProfile?.(userId, (p) => {
       p.activePromptSlot = slot;
     });
-    return slot ? t("profile.prompt_active", { slot: t(`profile.user_prompt_${slot}`) }) : t("profile.prompt_active_off");
+    const didReset = maybeClearConversationHistory({ changed, stateStore, chatId, userId, chatType });
+    const message = slot ? t("profile.prompt_active", { slot: t(`profile.user_prompt_${slot}`) }) : t("profile.prompt_active_off");
+    return withHistoryResetNotice(message, didReset, t);
+  }
+
+  if (command === "mypersona") {
+    const raw = String(args || "").trim();
+    if (!raw) return describeUserPersona({ t, profile: userProfile, includeUsage: true });
+    const isClear = raw.toLowerCase() === "clear" || raw === "-";
+    const value = isClear ? "" : clampText(raw, 12000);
+    const prevActivePersona = getActiveUserPersona(userProfile);
+    const nextEnabled = !isClear && Boolean(value);
+    stateStore.updateUserProfile?.(userId, (p) => {
+      p.customPersona = value;
+      p.customPersonaEnabled = nextEnabled;
+    });
+    const changed = prevActivePersona.enabled !== nextEnabled || (nextEnabled && prevActivePersona.text !== value);
+    const didReset = maybeClearConversationHistory({ changed, stateStore, chatId, userId, chatType });
+    const nextProfile = stateStore.getUserProfile?.(userId) || userProfile;
+    return [
+      withHistoryResetNotice(isClear ? t("profile.persona_cleared") : t("profile.persona_saved"), didReset, t),
+      "",
+      describeUserPersona({ t, profile: nextProfile, includeUsage: true })
+    ].join("\n");
+  }
+
+  if (command === "usemypersona") {
+    const raw = String(args || "").trim().toLowerCase();
+    if (!raw) return describeUserPersona({ t, profile: userProfile, includeUsage: true });
+    if (raw !== "on" && raw !== "off") return t("usage.usemypersona");
+    if (raw === "on" && !String(userProfile?.customPersona || "").trim()) return t("profile.persona_missing");
+    const nextEnabled = raw === "on";
+    const changed = getActiveUserPersona(userProfile).enabled !== nextEnabled;
+    stateStore.updateUserProfile?.(userId, (p) => {
+      p.customPersonaEnabled = nextEnabled;
+    });
+    const didReset = maybeClearConversationHistory({ changed, stateStore, chatId, userId, chatType });
+    const nextProfile = stateStore.getUserProfile?.(userId) || userProfile;
+    return [
+      withHistoryResetNotice(raw === "on" ? t("profile.persona_enabled") : t("profile.persona_disabled"), didReset, t),
+      "",
+      describeUserPersona({ t, profile: nextProfile, includeUsage: true })
+    ].join("\n");
   }
 
   if (command === "memory") {
@@ -310,6 +442,7 @@ function helpText(lang) {
     t("help.reset"),
     t("help.autoreply"),
     t("help.replystyle"),
+    t("help.globalpersona"),
     t("help.myprofile"),
     t("help.name"),
     t("help.nameoff"),
@@ -317,6 +450,8 @@ function helpText(lang) {
     t("help.myprompt1"),
     t("help.myprompt2"),
     t("help.usemyprompt"),
+    t("help.mypersona"),
+    t("help.usemypersona"),
     t("help.memory"),
     t("help.remember"),
     t("help.forget"),
@@ -329,12 +464,87 @@ function helpText(lang) {
 
 function describeUserProfile({ t, profile }) {
   const slot = getActiveUserPrompt(profile).slot;
+  const activePersona = getActiveUserPersona(profile);
   return [
     t("profile.title"),
     `${t("profile.name_mode")}: ${t(`profile.name_mode_${normalizeUserDisplayNameMode(profile?.displayNameMode)}`)}`,
     `${t("profile.custom_name")}: ${String(profile?.customDisplayName || "").trim() || t("profile.custom_name_empty")}`,
-    `${t("profile.active_prompt")}: ${slot ? t(`profile.user_prompt_${slot}`) : t("profile.user_prompt_off")}`
+    `${t("profile.active_prompt")}: ${slot ? t(`profile.user_prompt_${slot}`) : t("profile.user_prompt_off")}`,
+    `${t("status.user_persona")}: ${describePersonaState({ t, profile, activePersona })}`,
+    `${t("profile.custom_persona")}: ${previewText(profile?.customPersona, 100) || t("profile.custom_persona_empty")}`
   ].join("\n");
+}
+
+function describeUserPersona({ t, profile, includeUsage = false }) {
+  const activePersona = getActiveUserPersona(profile);
+  const lines = [
+    t("profile.persona_title"),
+    `${t("status.user_persona")}: ${describePersonaState({ t, profile, activePersona })}`,
+    `${t("profile.persona_length")}: ${t("profile.persona_chars", { count: String(String(profile?.customPersona || "").trim().length) })}`,
+    `${t("profile.custom_persona")}: ${previewText(profile?.customPersona, 180) || t("profile.custom_persona_empty")}`
+  ];
+  if (includeUsage) {
+    lines.push("", t("profile.persona_usage_hint"), t("profile.persona_toggle_hint"));
+  }
+  return lines.join("\n");
+}
+
+function describePersonaState({ t, profile, activePersona }) {
+  const hasPersona = Boolean(String(profile?.customPersona || "").trim());
+  if (activePersona?.enabled) return `${t("profile.persona_state_on")} · ${t("profile.persona_chars", { count: String(activePersona.text.length) })}`;
+  if (hasPersona) return `${t("profile.persona_state_saved")} · ${t("profile.persona_chars", { count: String(String(profile?.customPersona || "").trim().length) })}`;
+  return t("profile.persona_state_off");
+}
+
+function isGroupChatType(chatType) {
+  const type = String(chatType || "").trim();
+  return type === "group" || type === "supergroup";
+}
+
+function getStoredPersonaText(profile) {
+  return clampText(profile?.customPersona, 12000);
+}
+
+function formatLimitValue(t, value) {
+  const limit = clamp(Math.trunc(Number(value) || 0), 0, 1000000);
+  return limit > 0 ? String(limit) : t("globalpersona.unlimited");
+}
+
+function describeGlobalPersonaStatus({ t, stateStore, chatSettings }) {
+  const enabled = chatSettings?.globalPersonaEnabled === true;
+  if (!enabled) return t("globalpersona.status_off_short");
+  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
+  const count = clamp(Math.trunc(Number(chatSettings?.globalPersonaReplyCount || 0) || 0), 0, 1000000000);
+  const limitText = formatLimitValue(t, chatSettings?.globalPersonaReplyLimit);
+  const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
+  const hasPersona = Boolean(getStoredPersonaText(ownerProfile));
+  const ownerText = ownerUserId || t("globalpersona.owner_missing_short");
+  const suffix = hasPersona ? "" : ` · ${t("globalpersona.owner_persona_missing_short")}`;
+  return t("globalpersona.status_on_short", { owner: ownerText, count: String(count), limit: limitText }) + suffix;
+}
+
+function describeGlobalPersonaDetail({ t, stateStore, chatSettings }) {
+  const enabled = chatSettings?.globalPersonaEnabled === true;
+  if (!enabled) return `${t("globalpersona.status_off")}\n${t("globalpersona.note_autoreply")}`;
+  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
+  const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
+  const ownerLabel = ownerUserId || t("globalpersona.owner_missing_short");
+  const personaText = getStoredPersonaText(ownerProfile);
+  const count = clamp(Math.trunc(Number(chatSettings?.globalPersonaReplyCount || 0) || 0), 0, 1000000000);
+  return [
+    t("globalpersona.status_on"),
+    `${t("globalpersona.owner")}: ${ownerLabel}`,
+    `${t("globalpersona.replies")}: ${count}/${formatLimitValue(t, chatSettings?.globalPersonaReplyLimit)}`,
+    `${t("globalpersona.persona_ready")}: ${personaText ? t("globalpersona.ready_yes") : t("globalpersona.ready_no")}`,
+    t("globalpersona.note_autoreply")
+  ].join("\n");
+}
+
+function previewText(value, maxLen) {
+  const text = String(value || "").trim();
+  const limit = Math.max(8, Math.trunc(Number(maxLen) || 0));
+  if (!text || text.length <= limit) return text;
+  return `${text.slice(0, limit - 1)}…`;
 }
 
 function listProviders(cfg, chatSettings, defaultProviderId, lang) {
@@ -395,6 +605,31 @@ export function clearConversationHistory({ stateStore, chatId, userId, chatType 
   const legacyKey = legacyGroupConversationKey({ chatId, chatType });
   if (legacyKey && stateStore.peekConversationByKey?.(legacyKey)) {
     stateStore.updateConversationByKey(legacyKey, (c) => {
+      c.history = [];
+      c.summaryText = "";
+      c.summaryUpdatedAt = 0;
+    });
+  }
+}
+
+export function clearConversationHistoryForChat({ stateStore, chatId, chatType }) {
+  const target = String(chatId || "");
+  if (!target) return;
+  const keys = Array.isArray(stateStore.listConversationKeys?.()) ? stateStore.listConversationKeys() : [];
+  for (const key of keys) {
+    const convKey = String(key || "");
+    if (!convKey) continue;
+    if (convKey !== target && !convKey.startsWith(`${target}:`)) continue;
+    stateStore.updateConversationByKey?.(convKey, (c) => {
+      c.history = [];
+      c.summaryText = "";
+      c.summaryUpdatedAt = 0;
+    });
+  }
+
+  const legacyKey = legacyGroupConversationKey({ chatId, chatType });
+  if (legacyKey && stateStore.peekConversationByKey?.(legacyKey)) {
+    stateStore.updateConversationByKey?.(legacyKey, (c) => {
       c.history = [];
       c.summaryText = "";
       c.summaryUpdatedAt = 0;

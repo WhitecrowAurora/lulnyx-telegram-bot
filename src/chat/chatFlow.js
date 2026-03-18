@@ -1,14 +1,28 @@
 import { generateAssistantReply } from "../openai.js";
 import { bt } from "../botI18n.js";
-import { conversationKey } from "../state/common.js";
-import { getActiveUserPrompt } from "../state/common.js";
+import { clampText, conversationKey, getActiveUserPersona, getActiveUserPrompt } from "../state/common.js";
 import { clamp, localDayString, trimToMaxChars } from "../util.js";
 import { maybeCompressHistory, pickSummaryProvider } from "./flow/compression.js";
 import { buildLongTermAdditions } from "./flow/longTerm.js";
 import { buildChatInfo, buildSystemPrompt } from "./flow/systemPrompt.js";
 import { generateWithTools } from "./flow/toolCalling.js";
 import { countCharsForRequest, estimateTokensForRequest } from "./flow/usage.js";
-import { resolvePreferredUserLabel } from "./userProfile.js";
+import { resolveModelFacingUserLabel } from "./userProfile.js";
+
+function getSharedGroupPersona({ chatType, chatSettings, stateStore }) {
+  const type = String(chatType || chatSettings?.chatType || "").trim();
+  if (type !== "group" && type !== "supergroup") return { enabled: false, reason: "not_group" };
+  if (chatSettings?.globalPersonaEnabled !== true) return { enabled: false, reason: "disabled" };
+  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
+  if (!ownerUserId) return { enabled: false, reason: "missing_owner" };
+  const limit = clamp(Math.trunc(Number(chatSettings?.globalPersonaReplyLimit || 0) || 0), 0, 1000000);
+  const count = clamp(Math.trunc(Number(chatSettings?.globalPersonaReplyCount || 0) || 0), 0, 1000000000);
+  if (limit > 0 && count >= limit) return { enabled: false, reason: "limit", ownerUserId, limit, count };
+  const ownerProfile = stateStore.getUserProfile?.(ownerUserId) || null;
+  const text = clampText(ownerProfile?.customPersona, 12000);
+  if (!text) return { enabled: false, reason: "missing_persona", ownerUserId, limit, count };
+  return { enabled: true, ownerUserId, limit, count, text };
+}
 
 export async function handleChat({ logger, configStore, stateStore, chatId, userId, chatType, lang, sender, text }) {
   const t = (key, vars) => bt(lang, key, vars);
@@ -71,16 +85,26 @@ export async function handleChat({ logger, configStore, stateStore, chatId, user
     chatType,
     chatSettings,
     sender: {
-      ...sender,
-      preferredName: resolvePreferredUserLabel({ sender, profile: userProfile, withAt: true })
+      preferredName: resolveModelFacingUserLabel({ profile: userProfile })
     }
   });
   const activeUserPrompt = getActiveUserPrompt(userProfile);
+  const activeUserPersona = getActiveUserPersona(userProfile);
+  const modelFacingName = resolveModelFacingUserLabel({ profile: userProfile });
+  const sharedGroupPersona = getSharedGroupPersona({ chatType, chatSettings, stateStore });
+  const effectivePromptSystem = activeUserPrompt.text || prompt.system || "";
+  const effectivePersonaSystem = sharedGroupPersona.enabled
+    ? sharedGroupPersona.text
+    : activeUserPersona.enabled
+      ? activeUserPersona.text
+      : persona?.system || "";
 
   let systemPrompt = buildSystemPrompt({
-    promptSystem: prompt.system,
-    personaSystem: persona?.system || "",
-    userPrompt: activeUserPrompt.text,
+    promptSystem: effectivePromptSystem,
+    personaSystem: effectivePersonaSystem,
+    userPersona: "",
+    userPrompt: "",
+    preferredAddressingName: modelFacingName,
     chatInfo,
     rules: cfg.rules,
     facts: conv.facts,
@@ -195,6 +219,11 @@ export async function handleChat({ logger, configStore, stateStore, chatId, user
     const tokensOut = Number(u?.outputTokens ?? estOut) || estOut;
     stateStore.addUsageDay?.({ day, scope: "chat", id: String(chatId), charsIn, charsOut, tokensIn, tokensOut, replies: 1, requests });
     stateStore.addUsageDay?.({ day, scope: "user", id: String(userId), charsIn, charsOut, tokensIn, tokensOut, replies: 1, requests });
+    if (sharedGroupPersona.enabled) {
+      stateStore.updateChatSettings?.(chatId, (c) => {
+        c.globalPersonaReplyCount = clamp(Math.trunc(Number(c.globalPersonaReplyCount || 0) || 0) + 1, 0, 1000000000);
+      });
+    }
 
     return replyText;
   } catch (err) {

@@ -8,6 +8,10 @@ import {
   defaultChatSettings,
   defaultConversation,
   defaultUserProfile,
+  normalizeGlobalPersonaReplyCount,
+  normalizeGlobalPersonaReplyLimit,
+  normalizeUserProfileState,
+  normalizeBool,
   normalizeOptionalChatReplyStyle,
   normalizeUserDisplayNameMode,
   normalizeUserPromptSlot
@@ -138,7 +142,11 @@ function baseStoreApi({ getState, setState, markDirty }) {
           lastSeenAt: Number(chat.lastSeenAt || 0),
           providerId: String(chat.providerId || ""),
           autoReply: Boolean(chat.autoReply),
-          replyStyle: normalizeOptionalChatReplyStyle(chat.replyStyle)
+          replyStyle: normalizeOptionalChatReplyStyle(chat.replyStyle),
+          globalPersonaEnabled: Boolean(chat.globalPersonaEnabled),
+          globalPersonaUserId: String(chat.globalPersonaUserId || ""),
+          globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(chat.globalPersonaReplyLimit),
+          globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(chat.globalPersonaReplyCount)
         });
       }
       items.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
@@ -150,6 +158,7 @@ function baseStoreApi({ getState, setState, markDirty }) {
       if (!key) return defaultUserProfile();
       state.userProfiles ??= {};
       state.userProfiles[key] ??= defaultUserProfile();
+      normalizeUserProfileState(state.userProfiles[key]);
       return state.userProfiles[key];
     },
     updateUserProfile(userId, updater) {
@@ -158,6 +167,7 @@ function baseStoreApi({ getState, setState, markDirty }) {
       if (!key) return defaultUserProfile();
       const profile = this.getUserProfile(key);
       updater(profile);
+      normalizeUserProfileState(profile);
       profile.updatedAt = nowMs();
       setState(state);
       markDirty();
@@ -182,6 +192,7 @@ function baseStoreApi({ getState, setState, markDirty }) {
       const items = [];
       for (const [userId, profile] of Object.entries(state.userProfiles || {})) {
         if (!profile || typeof profile !== "object") continue;
+        normalizeUserProfileState(profile);
         items.push({
           userId: String(userId),
           username: String(profile.username || ""),
@@ -189,10 +200,13 @@ function baseStoreApi({ getState, setState, markDirty }) {
           lastName: String(profile.lastName || ""),
           displayNameMode: normalizeUserDisplayNameMode(profile.displayNameMode),
           customDisplayName: String(profile.customDisplayName || ""),
+          customPersona: String(profile.customPersona || ""),
+          customPersonaEnabled: normalizeBool(profile.customPersonaEnabled, false),
           customPrompt1: String(profile.customPrompt1 || ""),
           customPrompt2: String(profile.customPrompt2 || ""),
           activePromptSlot: normalizeUserPromptSlot(profile.activePromptSlot),
           lastSeenAt: Number(profile.lastSeenAt || 0),
+          hasPersona: Boolean(String(profile.customPersona || "").trim()),
           hasPrompt1: Boolean(String(profile.customPrompt1 || "").trim()),
           hasPrompt2: Boolean(String(profile.customPrompt2 || "").trim())
         });
@@ -385,6 +399,10 @@ function normalizeJsonState(raw) {
     chat.providerId = String(chat.providerId || "");
     chat.autoReply = Boolean(chat.autoReply);
     chat.replyStyle = normalizeOptionalChatReplyStyle(chat.replyStyle ?? defaults.replyStyle);
+    chat.globalPersonaEnabled = normalizeBool(chat.globalPersonaEnabled, defaults.globalPersonaEnabled);
+    chat.globalPersonaUserId = String(chat.globalPersonaUserId || "");
+    chat.globalPersonaReplyLimit = normalizeGlobalPersonaReplyLimit(chat.globalPersonaReplyLimit ?? defaults.globalPersonaReplyLimit);
+    chat.globalPersonaReplyCount = normalizeGlobalPersonaReplyCount(chat.globalPersonaReplyCount ?? defaults.globalPersonaReplyCount);
     chat.chatType = String(chat.chatType || "");
     chat.title = String(chat.title || "");
     chat.username = String(chat.username || "");
@@ -414,18 +432,7 @@ function normalizeJsonState(raw) {
 
   for (const profile of Object.values(state.userProfiles)) {
     if (!profile || typeof profile !== "object") continue;
-    const defaults = defaultUserProfile();
-    profile.username = String(profile.username || "");
-    profile.firstName = String(profile.firstName || "");
-    profile.lastName = String(profile.lastName || "");
-    profile.displayNameMode = normalizeUserDisplayNameMode(profile.displayNameMode ?? defaults.displayNameMode);
-    profile.customDisplayName = String(profile.customDisplayName || "");
-    profile.customPrompt1 = String(profile.customPrompt1 || "");
-    profile.customPrompt2 = String(profile.customPrompt2 || "");
-    profile.activePromptSlot = normalizeUserPromptSlot(profile.activePromptSlot ?? defaults.activePromptSlot);
-    profile.lastSeenAt = Number(profile.lastSeenAt || 0);
-    profile.createdAt = Number(profile.createdAt || defaults.createdAt);
-    profile.updatedAt = Number(profile.updatedAt || defaults.updatedAt);
+    normalizeUserProfileState(profile);
   }
 
   return state;

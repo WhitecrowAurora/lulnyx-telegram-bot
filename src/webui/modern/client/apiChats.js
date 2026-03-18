@@ -2,33 +2,88 @@ export function renderClientApiChats() {
   return `
 let knownChatsCache = [];
 
+function makePill(text) {
+  const el = document.createElement("span");
+  el.className = "pill";
+  el.textContent = text;
+  return el;
+}
+
+function formatLastSeen(ts) {
+  const ms = Number(ts || 0);
+  if (!Number.isFinite(ms) || ms <= 0) return I.timeNever;
+  const date = new Date(ms);
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(date);
+  } catch {
+    return date.toLocaleString();
+  }
+}
+
 function renderChats() {
   const filter = String($("chatFilter")?.value || "").trim().toLowerCase();
   const el = $("chats");
   el.innerHTML = "";
+  el.className = "chat-list";
   for (const c of knownChatsCache || []) {
     const chatId = String(c?.chatId || "");
     const title = String(c?.title || "");
     const username = String(c?.username || "");
     const chatType = String(c?.chatType || "");
-    const hay = (chatId + " " + title + " " + username + " " + chatType).toLowerCase();
+    const replyStyle = String(c?.replyStyle || "");
+    const replyStyleEffective = String(c?.replyStyleEffective || "reply_and_mention");
+    const providerName = String(c?.providerNameEffective || c?.providerEffective || "").trim() || I.labelNotConfigured;
+    const providerInherited = c?.providerInherited === true;
+    const lastSeenText = formatLastSeen(c?.lastSeenAt);
+    const replyStyleLabel =
+      replyStyleEffective === "reply_only"
+        ? I.labelReplyOnly
+        : replyStyleEffective === "mention_only"
+          ? I.labelMentionOnly
+          : I.labelReplyAndMention;
+    const hay = (chatId + " " + title + " " + username + " " + chatType + " " + providerName).toLowerCase();
     if (filter && !hay.includes(filter)) continue;
 
     const row = document.createElement("div");
-    row.className = "item";
+    row.className = "chat-card";
     const left = document.createElement("div");
-    left.innerHTML =
-      '<div><span class="k">' +
-      chatId +
-      '</span> <span class="pill" style="margin-left:8px">' +
-      chatType +
-      "</span></div>" +
-      '<div class="meta">' +
-      (title || username || "") +
-      "</div>";
+    left.className = "chat-main";
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "chat-title";
+    const idEl = document.createElement("span");
+    idEl.className = "k";
+    idEl.textContent = chatId;
+    const typeEl = document.createElement("span");
+    typeEl.className = "pill";
+    typeEl.textContent = chatType;
+    titleRow.appendChild(idEl);
+    titleRow.appendChild(typeEl);
+    left.appendChild(titleRow);
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "chat-name";
+    nameEl.textContent = title || username || chatId;
+    left.appendChild(nameEl);
+
+    const subEl = document.createElement("div");
+    subEl.className = "chat-sub";
+    subEl.textContent = username && title ? "@" + username : username ? "@" + username : "";
+    left.appendChild(subEl);
+
+    const tags = document.createElement("div");
+    tags.className = "chat-tags";
+    tags.appendChild(makePill(replyStyleLabel + (replyStyle ? "" : " · " + I.labelReplyStyleDefault)));
+    tags.appendChild(makePill(c && c.autoReply ? I.autoReplyOn : I.autoReplyOff));
+    tags.appendChild(makePill(I.labelProviderCurrent + ": " + providerName + (providerInherited ? " · " + I.labelReplyStyleDefault : "")));
+    tags.appendChild(makePill(I.labelLastActive + ": " + lastSeenText));
+    left.appendChild(tags);
 
     const right = document.createElement("div");
-    right.className = "row";
+    right.className = "chat-actions";
+
+    const rowTop = document.createElement("div");
+    rowTop.className = "row";
     const btnCopy = document.createElement("button");
     btnCopy.className = "btn";
     btnCopy.type = "button";
@@ -79,9 +134,52 @@ function renderChats() {
       toast(I.saved, true);
     });
 
-    right.appendChild(btnCopy);
-    right.appendChild(btnAllow);
-    right.appendChild(btnAuto);
+    const styleWrap = document.createElement("div");
+    styleWrap.className = "row";
+    const styleSel = document.createElement("select");
+    styleSel.className = "input";
+    styleSel.style.minWidth = "190px";
+    styleSel.innerHTML =
+      '<option value="">' +
+      I.labelReplyStyleDefault +
+      '</option><option value="reply_only">' +
+      I.labelReplyOnly +
+      '</option><option value="reply_and_mention">' +
+      I.labelReplyAndMention +
+      '</option><option value="mention_only">' +
+      I.labelMentionOnly +
+      "</option>";
+    styleSel.value = replyStyle;
+
+    const btnStyle = document.createElement("button");
+    btnStyle.className = "btn";
+    btnStyle.type = "button";
+    btnStyle.textContent = I.actionApply;
+    btnStyle.addEventListener("click", async () => {
+      const next = String(styleSel.value || "");
+      const res = await fetch("/api/chat-settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chatId, patch: { replyStyle: next } })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(json.error || I.errSave, false);
+        return;
+      }
+      c.replyStyle = next;
+      c.replyStyleEffective = String(json?.settings?.replyStyleEffective || c.replyStyleEffective || "reply_and_mention");
+      renderChats();
+      toast(I.saved, true);
+    });
+    styleWrap.appendChild(styleSel);
+    styleWrap.appendChild(btnStyle);
+
+    rowTop.appendChild(btnCopy);
+    rowTop.appendChild(btnAllow);
+    rowTop.appendChild(btnAuto);
+    right.appendChild(rowTop);
+    right.appendChild(styleWrap);
 
     row.appendChild(left);
     row.appendChild(right);
@@ -101,4 +199,3 @@ async function loadChats() {
 }
 `;
 }
-

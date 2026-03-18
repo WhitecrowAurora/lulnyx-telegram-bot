@@ -2,11 +2,14 @@ import { clamp } from "../util.js";
 import { searxngImageSearch, searxngSearch } from "../search.js";
 import { bt } from "../botI18n.js";
 import { menuMarkup, menuText } from "./menu.js";
+import { clampText, getActiveUserPrompt, getEffectiveChatReplyStyle, normalizeUserDisplayNameMode, normalizeUserPromptSlot } from "../state/common.js";
 
 export async function handleCommand({ logger, configStore, stateStore, chatId, userId, chatType, lang, command, args }) {
   const t = (key, vars) => bt(lang, key, vars);
   const cfg = configStore.get();
   const chatSettings = stateStore.getChatSettings(chatId);
+  const userProfile = stateStore.getUserProfile?.(userId) || null;
+  const effectiveReplyStyle = getEffectiveChatReplyStyle({ cfg, chatSettings });
   const conv = stateStore.getConversation({ chatId, userId, chatType });
   if (!conv) return t("err.conversation_na");
 
@@ -24,12 +27,17 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     const memEnabled = conv.memoryEnabled ?? cfg.memory.enabledByDefault;
     const factsCount = Array.isArray(conv.facts) ? conv.facts.length : 0;
     const historyCount = Array.isArray(conv.history) ? conv.history.length : 0;
+    const activePrompt = getActiveUserPrompt(userProfile);
     return [
       t("status.title"),
       `${t("status.provider")}: ${providerId}`,
       `${t("status.prompt")}: ${promptId}`,
       `${t("status.persona")}: ${personaId}`,
       `${t("status.memory")}: ${memEnabled ? t("memory.on") : t("memory.off")}`,
+      `${t("status.reply_style")}: ${t(`replystyle.${effectiveReplyStyle}`)}`,
+      `${t("status.name_mode")}: ${t(`profile.name_mode_${normalizeUserDisplayNameMode(userProfile?.displayNameMode)}`)}`,
+      `${t("status.custom_name")}: ${String(userProfile?.customDisplayName || "").trim() || t("profile.custom_name_empty")}`,
+      `${t("status.user_prompt")}: ${activePrompt.slot ? t(`profile.user_prompt_${activePrompt.slot}`) : t("profile.user_prompt_off")}`,
       `${t("status.facts")}: ${factsCount}`,
       `${t("status.history")}: ${historyCount}`
     ].join("\n");
@@ -53,7 +61,10 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
         safeSearch: cfg.search.safeSearch,
         categories: cfg.search.categories || "",
         maxResults: cfg.search.maxResults,
-        timeoutMs: cfg.search.timeoutMs
+        timeoutMs: cfg.search.timeoutMs,
+        security: cfg.security,
+        allowPrivateNetwork: cfg.search.allowPrivateNetwork,
+        logger
       });
       if (results.length === 0) return t("search.no_results");
       const lines = [t("search.results")];
@@ -80,7 +91,10 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
         language: cfg.search.language,
         safeSearch: cfg.search.safeSearch,
         maxResults: cfg.search.maxResults,
-        timeoutMs: cfg.search.timeoutMs
+        timeoutMs: cfg.search.timeoutMs,
+        security: cfg.security,
+        allowPrivateNetwork: cfg.search.allowPrivateNetwork,
+        logger
       });
       const https = results.filter((r) => String(r.imageUrl).startsWith("https://"));
       const picked = (https.length > 0 ? https : results).slice(0, 3);
@@ -142,6 +156,83 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
     if (mode !== "on" && mode !== "off") return t("usage.autoreply");
     stateStore.updateChatSettings(chatId, (c) => (c.autoReply = mode === "on"));
     return mode === "on" ? t("autoreply.on") : t("autoreply.off");
+  }
+
+  if (command === "replystyle") {
+    const mode = args.trim().toLowerCase();
+    if (!mode) return t("usage.replystyle");
+    const styleMap = {
+      default: "",
+      inherit: "",
+      reply: "reply_only",
+      reply_only: "reply_only",
+      mention: "mention_only",
+      mention_only: "mention_only",
+      reply_mention: "reply_and_mention",
+      reply_and_mention: "reply_and_mention"
+    };
+    const next = styleMap[mode];
+    if (!next) return t("usage.replystyle");
+    stateStore.updateChatSettings(chatId, (c) => (c.replyStyle = next));
+    return next ? t("replystyle.set", { mode: t(`replystyle.${next}`) }) : t("replystyle.set_default");
+  }
+
+  if (command === "myprofile") {
+    return describeUserProfile({ t, profile: userProfile });
+  }
+
+  if (command === "name") {
+    const value = clampText(args, 64);
+    if (!value) return t("usage.name");
+    stateStore.updateUserProfile?.(userId, (p) => {
+      p.customDisplayName = value;
+      p.displayNameMode = "custom";
+    });
+    return t("profile.name_saved", { name: value });
+  }
+
+  if (command === "nameoff") {
+    stateStore.updateUserProfile?.(userId, (p) => {
+      p.displayNameMode = "username";
+    });
+    return t("profile.name_reset");
+  }
+
+  if (command === "namemode") {
+    const raw = String(args || "").trim().toLowerCase();
+    if (!raw) return t("usage.namemode");
+    if (raw !== "username" && raw !== "custom") return t("usage.namemode");
+    const next = normalizeUserDisplayNameMode(raw);
+    stateStore.updateUserProfile?.(userId, (p) => {
+      p.displayNameMode = next;
+    });
+    return t("profile.name_mode_set", { mode: t(`profile.name_mode_${next}`) });
+  }
+
+  if (command === "myprompt1" || command === "myprompt2") {
+    const slot = command === "myprompt1" ? "slot1" : "slot2";
+    const raw = String(args || "").trim();
+    if (!raw) return t(`usage.${command}`);
+    const isClear = raw.toLowerCase() === "clear" || raw === "-";
+    const value = isClear ? "" : clampText(raw, 12000);
+    stateStore.updateUserProfile?.(userId, (p) => {
+      if (slot === "slot1") p.customPrompt1 = value;
+      else p.customPrompt2 = value;
+      if (isClear && normalizeUserPromptSlot(p.activePromptSlot) === slot) p.activePromptSlot = "";
+    });
+    return isClear ? t("profile.prompt_cleared", { slot: t(`profile.user_prompt_${slot}`) }) : t("profile.prompt_saved", { slot: t(`profile.user_prompt_${slot}`) });
+  }
+
+  if (command === "usemyprompt") {
+    const raw = String(args || "").trim().toLowerCase();
+    if (!raw) return t("usage.usemyprompt");
+    const allowed = new Set(["off", "1", "2", "slot1", "slot2"]);
+    if (!allowed.has(raw)) return t("usage.usemyprompt");
+    const slot = normalizeUserPromptSlot(raw);
+    stateStore.updateUserProfile?.(userId, (p) => {
+      p.activePromptSlot = slot;
+    });
+    return slot ? t("profile.prompt_active", { slot: t(`profile.user_prompt_${slot}`) }) : t("profile.prompt_active_off");
   }
 
   if (command === "memory") {
@@ -218,6 +309,14 @@ function helpText(lang) {
     t("help.img"),
     t("help.reset"),
     t("help.autoreply"),
+    t("help.replystyle"),
+    t("help.myprofile"),
+    t("help.name"),
+    t("help.nameoff"),
+    t("help.namemode"),
+    t("help.myprompt1"),
+    t("help.myprompt2"),
+    t("help.usemyprompt"),
     t("help.memory"),
     t("help.remember"),
     t("help.forget"),
@@ -225,6 +324,16 @@ function helpText(lang) {
     t("help.wipe"),
     t("help.menu"),
     t("help.reload")
+  ].join("\n");
+}
+
+function describeUserProfile({ t, profile }) {
+  const slot = getActiveUserPrompt(profile).slot;
+  return [
+    t("profile.title"),
+    `${t("profile.name_mode")}: ${t(`profile.name_mode_${normalizeUserDisplayNameMode(profile?.displayNameMode)}`)}`,
+    `${t("profile.custom_name")}: ${String(profile?.customDisplayName || "").trim() || t("profile.custom_name_empty")}`,
+    `${t("profile.active_prompt")}: ${slot ? t(`profile.user_prompt_${slot}`) : t("profile.user_prompt_off")}`
   ].join("\n");
 }
 
@@ -321,4 +430,3 @@ export function clearConversationAll({ stateStore, chatId, userId, chatType, kee
     });
   }
 }
-

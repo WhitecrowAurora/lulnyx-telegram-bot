@@ -42,6 +42,8 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                 <summary>${tt("nav.tools")}</summary>
                 <div class="nav-items">
                   <button class="nav-item" data-view="tools-chats">${tt("nav.known_chats")}</button>
+                  <button class="nav-item" data-view="tools-users">${tt("nav.user_profiles")}</button>
+                  <button class="nav-item" data-view="tools-plugins">${tt("nav.plugins")}</button>
                   <button class="nav-item" data-view="tools-memory">${tt("nav.memory_admin")}</button>
                   <button class="nav-item" data-view="tools-search">${tt("nav.search_test")}</button>
                   <button class="nav-item" data-view="tools-analytics">${tt("nav.analytics")}</button>
@@ -126,6 +128,27 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                     <option value="false">false</option>
                     <option value="true">true</option>
                   </select>
+                  <label>${tt("field.tg_delivery_mode")}</label>
+                  <select class="input" id="fTgDeliveryMode">
+                    <option value="polling">polling</option>
+                    <option value="webhook">webhook</option>
+                  </select>
+                  <label>${tt("field.tg_public_base_url")}</label>
+                  <input class="input" id="fTgPublicBaseUrl" placeholder="https://example.com" />
+                  <label>${tt("field.tg_webhook_secret_keep")}</label>
+                  <input class="input" id="fTgWebhookSecret" type="password" placeholder="${tt("placeholder.keep_blank")}" />
+                  <label>${tt("field.tg_drop_pending_updates")}</label>
+                  <select class="input" id="fTgDropPending">
+                    <option value="false">false</option>
+                    <option value="true">true</option>
+                  </select>
+                  <label>${tt("field.tg_reply_style_default")}</label>
+                  <select class="input" id="fTgReplyStyleDefault">
+                    <option value="reply_only">${tt("label.reply_only")}</option>
+                    <option value="reply_and_mention">${tt("label.reply_and_mention")}</option>
+                    <option value="mention_only">${tt("label.mention_only")}</option>
+                  </select>
+                  <div class="sub" style="margin-top:8px">${tt("telegram.webhook_note")}</div>
                   <label>${tt("field.allowed_chat_ids")}</label>
                   <textarea id="fAllowedChats" style="min-height:110px"></textarea>
                   <label>${tt("field.allowed_user_ids")}</label>
@@ -136,6 +159,12 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                   <input class="input" id="fTgMaxConcurrent" type="number" min="0" />
                   <label>${tt("field.queue_max_pending_per_chat")}</label>
                   <input class="input" id="fTgMaxPendingPerChat" type="number" min="0" />
+
+                  <div style="font-weight:700;margin:18px 0 6px">${tt("telegram.status_title")}</div>
+                  <div class="row">
+                    <button class="btn" id="btnTgStatus" type="button">${tt("telegram.status_refresh")}</button>
+                  </div>
+                  <textarea id="tgStatusOut" style="min-height:140px" readonly></textarea>
                 </div>
               </div>
             </div>
@@ -253,6 +282,28 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                   <label>${tt("storage.sqlite_path")}</label>
                   <input class="input" id="fStateSqlite" placeholder="data/state.sqlite" />
                   <div class="sub" style="margin-top:8px">${tt("storage.secret_hint")}</div>
+
+                  <div style="font-weight:700;margin:18px 0 6px">${tt("security.title")}</div>
+                  <div class="sub">${tt("security.note")}</div>
+                  <label>${tt("security.block_private")}</label>
+                  <select class="input" id="fSecBlockPrivate">
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                  <label>${tt("security.dns_resolve")}</label>
+                  <select class="input" id="fSecDnsResolve">
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                  <label>${tt("security.dns_timeout_ms")}</label>
+                  <input class="input" id="fSecDnsTimeout" type="number" min="0" />
+                  <label>${tt("security.deny_on_resolve_failure")}</label>
+                  <select class="input" id="fSecDenyOnResolveFail">
+                    <option value="false">false</option>
+                    <option value="true">true</option>
+                  </select>
+                  <label>${tt("security.allowed_host_suffixes")}</label>
+                  <textarea id="fSecAllowedSuffixes" style="min-height:110px"></textarea>
                 </div>
               </div>
             </div>
@@ -268,6 +319,11 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                   </select>
                   <label>${tt("search.base_url")}</label>
                   <input class="input" id="fSearchBase" placeholder="http://127.0.0.1:8080" />
+                  <label>${tt("search.allow_private_network")}</label>
+                  <select class="input" id="fSearchAllowPrivate">
+                    <option value="false">false</option>
+                    <option value="true">true</option>
+                  </select>
                   <label>${tt("field.timeout_ms")}</label>
                   <input class="input" id="fSearchTimeout" type="number" min="1000" />
                   <label>${tt("search.max_results")}</label>
@@ -430,6 +486,26 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
             <label>${tt("field.filter")}</label>
             <input class="input" id="chatFilter" placeholder="${tt("placeholder.chat_filter")}" />
             <div class="list" id="chats"></div>
+          </div>
+
+          <div class="view" id="view-tools-users">
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <div style="font-weight:700">${tt("users.title")}</div>
+              <button class="btn" id="btnUsers" type="button">${tt("action.refresh")}</button>
+            </div>
+            <div class="sub" style="margin:8px 0 10px">${tt("users.note")}</div>
+            <label>${tt("field.filter")}</label>
+            <input class="input" id="userFilter" placeholder="${tt("placeholder.user_filter")}" />
+            <div class="list" id="users"></div>
+          </div>
+
+          <div class="view" id="view-tools-plugins">
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <div style="font-weight:700">${tt("plugins.title")}</div>
+              <button class="btn" id="btnPluginsRefresh" type="button">${tt("action.refresh")}</button>
+            </div>
+            <div class="sub" style="margin:8px 0 10px">${tt("plugins.note")}</div>
+            <div class="list" id="plugins"></div>
           </div>
 
           <div class="view" id="view-tools-analytics">

@@ -1,17 +1,20 @@
 import { generateAssistantReply } from "../openai.js";
 import { bt } from "../botI18n.js";
 import { conversationKey } from "../state/common.js";
+import { getActiveUserPrompt } from "../state/common.js";
 import { clamp, localDayString, trimToMaxChars } from "../util.js";
 import { maybeCompressHistory, pickSummaryProvider } from "./flow/compression.js";
 import { buildLongTermAdditions } from "./flow/longTerm.js";
 import { buildChatInfo, buildSystemPrompt } from "./flow/systemPrompt.js";
 import { generateWithTools } from "./flow/toolCalling.js";
 import { countCharsForRequest, estimateTokensForRequest } from "./flow/usage.js";
+import { resolvePreferredUserLabel } from "./userProfile.js";
 
 export async function handleChat({ logger, configStore, stateStore, chatId, userId, chatType, lang, sender, text }) {
   const t = (key, vars) => bt(lang, key, vars);
   const cfg = configStore.get();
   const chatSettings = stateStore.getChatSettings(chatId);
+  const userProfile = stateStore.getUserProfile?.(userId) || null;
   let conv = stateStore.getConversation({ chatId, userId, chatType });
   if (!conv) return t("err.conversation_na");
 
@@ -62,11 +65,22 @@ export async function handleChat({ logger, configStore, stateStore, chatId, user
 
   const convKey = conversationKey({ chatId, userId, chatType });
   const longTerm = await buildLongTermAdditions({ cfg, stateStore, convKey });
-  const chatInfo = buildChatInfo({ chatId, userId, chatType, chatSettings, sender });
+  const chatInfo = buildChatInfo({
+    chatId,
+    userId,
+    chatType,
+    chatSettings,
+    sender: {
+      ...sender,
+      preferredName: resolvePreferredUserLabel({ sender, profile: userProfile, withAt: true })
+    }
+  });
+  const activeUserPrompt = getActiveUserPrompt(userProfile);
 
-  const systemPrompt = buildSystemPrompt({
+  let systemPrompt = buildSystemPrompt({
     promptSystem: prompt.system,
     personaSystem: persona?.system || "",
+    userPrompt: activeUserPrompt.text,
     chatInfo,
     rules: cfg.rules,
     facts: conv.facts,
@@ -74,6 +88,24 @@ export async function handleChat({ logger, configStore, stateStore, chatId, user
     longTermMemory: longTerm.longTermMemory,
     longTermPersona: longTerm.longTermPersona
   });
+
+  const pluginManager = configStore.pluginManager;
+  if (pluginManager?.scan) {
+    await pluginManager.scan().catch(() => {});
+    const out = await pluginManager
+      .applyBeforeModel({
+        systemPrompt,
+        messages,
+        ctx: { chatId, userId, chatType, lang, text, providerId, promptId, personaId }
+      })
+      .catch(() => null);
+    if (out?.systemPrompt) systemPrompt = out.systemPrompt;
+    if (out?.messages) {
+      // replace message array if plugin provided one
+      messages.length = 0;
+      for (const m of out.messages) messages.push(m);
+    }
+  }
 
   // Quotas (per day, per chat/user) - applied only to model calls.
   const day = localDayString();
@@ -121,6 +153,7 @@ export async function handleChat({ logger, configStore, stateStore, chatId, user
       : await generateAssistantReply({
           logger,
           provider,
+          security: cfg.security,
           systemPrompt,
           messages,
           temperature: cfg.openai.temperature,
@@ -132,7 +165,13 @@ export async function handleChat({ logger, configStore, stateStore, chatId, user
           retry: cfg.openai.retry,
           maxCharsPerMessage
         });
-    const replyText = toolCallingOut.text;
+    let replyText = toolCallingOut.text;
+    if (pluginManager?.applyAfterModel) {
+      await pluginManager.scan().catch(() => {});
+      replyText = await pluginManager
+        .applyAfterModel({ replyText, ctx: { chatId, userId, chatType, lang, text, providerId, promptId, personaId } })
+        .catch(() => replyText);
+    }
     const usage = toolCallingOut.usage;
     const requests = toolCallingEnabled ? toolCallingOut.requests : 1;
 
@@ -169,4 +208,3 @@ export async function handleChat({ logger, configStore, stateStore, chatId, user
     return `API error: ${err?.message || "unknown"}${details ? `\n\n${details}` : ""}`;
   }
 }
-

@@ -10,6 +10,13 @@ function renderForm(cfg) {
   $("fCookieSecure").value = c.web && c.web.cookieSecure === true ? "true" : "false";
   $("fTgToken").value = "";
   $("fTgAllowAll").value = c.telegram && c.telegram.allowAll === true ? "true" : "false";
+  $("fTgDeliveryMode").value = c.telegram && c.telegram.delivery && c.telegram.delivery.mode === "webhook" ? "webhook" : "polling";
+  $("fTgPublicBaseUrl").value = c.telegram && c.telegram.delivery && c.telegram.delivery.publicBaseUrl ? c.telegram.delivery.publicBaseUrl : "";
+  $("fTgWebhookSecret").value = "";
+  $("fTgDropPending").value =
+    c.telegram && c.telegram.delivery && c.telegram.delivery.dropPendingUpdates === true ? "true" : "false";
+  $("fTgReplyStyleDefault").value =
+    c.telegram && c.telegram.replyStyleByDefault ? c.telegram.replyStyleByDefault : "reply_and_mention";
   $("fAllowedChats").value = Array.isArray(c.telegram && c.telegram.allowedChatIds) ? c.telegram.allowedChatIds.join("\\n") : "";
   $("fAllowedUsers").value = Array.isArray(c.telegram && c.telegram.allowedUserIds) ? c.telegram.allowedUserIds.join("\\n") : "";
   $("fTgMinInterval").value =
@@ -44,8 +51,20 @@ function renderForm(cfg) {
   $("fStateJson").value = c.stateStorage && c.stateStorage.jsonPath ? c.stateStorage.jsonPath : "data/state.json";
   $("fStateSqlite").value = c.stateStorage && c.stateStorage.sqlitePath ? c.stateStorage.sqlitePath : "data/state.sqlite";
 
+  $("fSecBlockPrivate").value = c.security && c.security.outbound && c.security.outbound.blockPrivateNetworks === false ? "false" : "true";
+  $("fSecDnsResolve").value = c.security && c.security.outbound && c.security.outbound.dnsResolve === false ? "false" : "true";
+  $("fSecDnsTimeout").value =
+    c.security && c.security.outbound && c.security.outbound.dnsTimeoutMs != null ? c.security.outbound.dnsTimeoutMs : 800;
+  $("fSecDenyOnResolveFail").value =
+    c.security && c.security.outbound && c.security.outbound.denyOnResolveFailure === true ? "true" : "false";
+  $("fSecAllowedSuffixes").value =
+    c.security && c.security.outbound && Array.isArray(c.security.outbound.allowedHostSuffixes)
+      ? c.security.outbound.allowedHostSuffixes.join("\\n")
+      : "";
+
   $("fSearchEnabled").value = c.search && c.search.enabled === true ? "true" : "false";
   $("fSearchBase").value = c.search && c.search.baseUrl ? c.search.baseUrl : "";
+  $("fSearchAllowPrivate").value = c.search && c.search.allowPrivateNetwork === true ? "true" : "false";
   $("fSearchTimeout").value = c.search && c.search.timeoutMs != null ? c.search.timeoutMs : 10000;
   $("fSearchMax").value = c.search && c.search.maxResults != null ? c.search.maxResults : 5;
   $("fSearchLang").value = c.search && c.search.language ? c.search.language : "en";

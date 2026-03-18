@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureDirSync, nowMs } from "../util.js";
 import { resolveAppRootDir } from "../appPaths.js";
-import { clampInt, conversationKey } from "./common.js";
+import {
+  clampInt,
+  conversationKey,
+  defaultUserProfile,
+  normalizeOptionalChatReplyStyle,
+  normalizeUserDisplayNameMode,
+  normalizeUserPromptSlot
+} from "./common.js";
 import { loadJsonState } from "./jsonStore.js";
 
 export async function createSqliteStateStore({ logger, configStore }) {
@@ -25,6 +32,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
       chat_id TEXT PRIMARY KEY,
       provider_id TEXT NOT NULL DEFAULT '',
       auto_reply INTEGER NOT NULL DEFAULT 0,
+      reply_style TEXT NOT NULL DEFAULT 'reply_and_mention',
       chat_type TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL DEFAULT '',
       username TEXT NOT NULL DEFAULT '',
@@ -73,11 +81,28 @@ export async function createSqliteStateStore({ logger, configStore }) {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      user_id TEXT PRIMARY KEY,
+      username TEXT NOT NULL DEFAULT '',
+      first_name TEXT NOT NULL DEFAULT '',
+      last_name TEXT NOT NULL DEFAULT '',
+      display_name_mode TEXT NOT NULL DEFAULT 'username',
+      custom_display_name TEXT NOT NULL DEFAULT '',
+      custom_prompt_1 TEXT NOT NULL DEFAULT '',
+      custom_prompt_2 TEXT NOT NULL DEFAULT '',
+      active_prompt_slot TEXT NOT NULL DEFAULT '',
+      last_seen_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   // Backward-compatible migrations for existing sqlite DBs
   try {
     db.exec("ALTER TABLE chat_settings ADD COLUMN auto_reply INTEGER NOT NULL DEFAULT 0");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN reply_style TEXT NOT NULL DEFAULT 'reply_and_mention'");
   } catch {}
   try {
     db.exec("ALTER TABLE chat_settings ADD COLUMN chat_type TEXT NOT NULL DEFAULT ''");
@@ -103,6 +128,39 @@ export async function createSqliteStateStore({ logger, configStore }) {
   try {
     db.exec("ALTER TABLE usage_daily ADD COLUMN chars_out INTEGER NOT NULL DEFAULT 0");
   } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN username TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN first_name TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN last_name TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN display_name_mode TEXT NOT NULL DEFAULT 'username'");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN custom_display_name TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN custom_prompt_1 TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN custom_prompt_2 TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN active_prompt_slot TEXT NOT NULL DEFAULT ''");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN last_seen_at INTEGER NOT NULL DEFAULT 0");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE user_profiles ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0");
+  } catch {}
 
   // Optional one-time migration from JSON state file if DB is empty
   tryMigrateFromJson({ logger, configStore, db });
@@ -110,14 +168,15 @@ export async function createSqliteStateStore({ logger, configStore }) {
   const stmtGetMeta = db.prepare("SELECT value FROM meta WHERE key = ?");
   const stmtUpsertMeta = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
   const stmtGetChat = db.prepare(
-    "SELECT chat_id, provider_id, auto_reply, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings WHERE chat_id = ?"
+    "SELECT chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings WHERE chat_id = ?"
   );
   const stmtUpsertChat = db.prepare(`
-    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, chat_type, title, username, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(chat_id) DO UPDATE SET
       provider_id=excluded.provider_id,
       auto_reply=excluded.auto_reply,
+      reply_style=excluded.reply_style,
       chat_type=excluded.chat_type,
       title=excluded.title,
       username=excluded.username,
@@ -125,7 +184,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
       updated_at=excluded.updated_at
   `);
   const stmtListChats = db.prepare(
-    "SELECT chat_id, provider_id, auto_reply, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings"
+    "SELECT chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings"
   );
 
   const stmtGetConv = db.prepare(`
@@ -223,14 +282,45 @@ export async function createSqliteStateStore({ logger, configStore }) {
     INSERT INTO bot_docs (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
   `);
+  const stmtGetUserProfile = db.prepare(`
+    SELECT user_id, username, first_name, last_name, display_name_mode, custom_display_name,
+      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+    FROM user_profiles WHERE user_id = ?
+  `);
+  const stmtUpsertUserProfile = db.prepare(`
+    INSERT INTO user_profiles (
+      user_id, username, first_name, last_name, display_name_mode, custom_display_name,
+      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      username=excluded.username,
+      first_name=excluded.first_name,
+      last_name=excluded.last_name,
+      display_name_mode=excluded.display_name_mode,
+      custom_display_name=excluded.custom_display_name,
+      custom_prompt_1=excluded.custom_prompt_1,
+      custom_prompt_2=excluded.custom_prompt_2,
+      active_prompt_slot=excluded.active_prompt_slot,
+      last_seen_at=excluded.last_seen_at,
+      updated_at=excluded.updated_at
+  `);
+  const stmtListUserProfiles = db.prepare(`
+    SELECT user_id, username, first_name, last_name, display_name_mode, custom_display_name,
+      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+    FROM user_profiles
+  `);
 
   const store = {
+    getBackendInfo() {
+      return { type: "sqlite", dbPath };
+    },
     getRaw() {
       const chats = {};
       for (const r of stmtListChats.all()) {
         chats[String(r.chat_id)] = {
           providerId: String(r.provider_id || ""),
           autoReply: Boolean(Number(r.auto_reply || 0)),
+          replyStyle: normalizeOptionalChatReplyStyle(r.reply_style),
           createdAt: Number(r.created_at || 0),
           updatedAt: Number(r.updated_at || 0)
         };
@@ -252,6 +342,24 @@ export async function createSqliteStateStore({ logger, configStore }) {
       return {
         chats,
         conversations,
+        userProfiles: Object.fromEntries(
+          stmtListUserProfiles.all().map((r) => [
+            String(r.user_id),
+            {
+              username: String(r.username || ""),
+              firstName: String(r.first_name || ""),
+              lastName: String(r.last_name || ""),
+              displayNameMode: normalizeUserDisplayNameMode(r.display_name_mode),
+              customDisplayName: String(r.custom_display_name || ""),
+              customPrompt1: String(r.custom_prompt_1 || ""),
+              customPrompt2: String(r.custom_prompt_2 || ""),
+              activePromptSlot: normalizeUserPromptSlot(r.active_prompt_slot),
+              lastSeenAt: Number(r.last_seen_at || 0),
+              createdAt: Number(r.created_at || 0),
+              updatedAt: Number(r.updated_at || 0)
+            }
+          ])
+        ),
         meta: {},
         usageDaily: {},
         telegram: {
@@ -283,6 +391,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
         return {
           providerId: String(row.provider_id || ""),
           autoReply: Boolean(Number(row.auto_reply || 0)),
+          replyStyle: normalizeOptionalChatReplyStyle(row.reply_style),
           chatType: String(row.chat_type || ""),
           title: String(row.title || ""),
           username: String(row.username || ""),
@@ -292,8 +401,18 @@ export async function createSqliteStateStore({ logger, configStore }) {
         };
       }
       const ts = nowMs();
-      stmtUpsertChat.run(key, "", 0, "", "", "", 0, ts, ts);
-      return { providerId: "", autoReply: false, chatType: "", title: "", username: "", lastSeenAt: 0, createdAt: ts, updatedAt: ts };
+      stmtUpsertChat.run(key, "", 0, "", "", "", "", 0, ts, ts);
+      return {
+        providerId: "",
+        autoReply: false,
+        replyStyle: "",
+        chatType: "",
+        title: "",
+        username: "",
+        lastSeenAt: 0,
+        createdAt: ts,
+        updatedAt: ts
+      };
     },
     updateChatSettings(chatId, updater) {
       const key = String(chatId);
@@ -305,6 +424,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
         key,
         String(current.providerId || ""),
         current.autoReply ? 1 : 0,
+        normalizeOptionalChatReplyStyle(current.replyStyle),
         String(current.chatType || ""),
         String(current.title || ""),
         String(current.username || ""),
@@ -328,6 +448,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
         key,
         String(current.providerId || ""),
         current.autoReply ? 1 : 0,
+        normalizeOptionalChatReplyStyle(current.replyStyle),
         String(current.chatType || ""),
         String(current.title || ""),
         String(current.username || ""),
@@ -345,7 +466,97 @@ export async function createSqliteStateStore({ logger, configStore }) {
         username: String(r.username || ""),
         lastSeenAt: Number(r.last_seen_at || 0),
         providerId: String(r.provider_id || ""),
-        autoReply: Boolean(Number(r.auto_reply || 0))
+        autoReply: Boolean(Number(r.auto_reply || 0)),
+        replyStyle: normalizeOptionalChatReplyStyle(r.reply_style)
+      }));
+      items.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
+      return items;
+    },
+    getUserProfile(userId) {
+      const key = String(userId || "");
+      if (!key) return defaultUserProfile();
+      const row = stmtGetUserProfile.get(key);
+      if (row) return rowToUserProfile(row);
+      const ts = nowMs();
+      stmtUpsertUserProfile.run(key, "", "", "", "username", "", "", "", "", 0, ts, ts);
+      return {
+        username: "",
+        firstName: "",
+        lastName: "",
+        displayNameMode: "username",
+        customDisplayName: "",
+        customPrompt1: "",
+        customPrompt2: "",
+        activePromptSlot: "",
+        lastSeenAt: 0,
+        createdAt: ts,
+        updatedAt: ts
+      };
+    },
+    updateUserProfile(userId, updater) {
+      const key = String(userId || "");
+      if (!key) return defaultUserProfile();
+      const current = store.getUserProfile(key);
+      updater(current);
+      const ts = nowMs();
+      current.updatedAt = ts;
+      stmtUpsertUserProfile.run(
+        key,
+        String(current.username || ""),
+        String(current.firstName || ""),
+        String(current.lastName || ""),
+        normalizeUserDisplayNameMode(current.displayNameMode),
+        String(current.customDisplayName || ""),
+        String(current.customPrompt1 || ""),
+        String(current.customPrompt2 || ""),
+        normalizeUserPromptSlot(current.activePromptSlot),
+        Number(current.lastSeenAt || 0),
+        Number(current.createdAt || ts),
+        ts
+      );
+      return current;
+    },
+    touchUser(userId, meta) {
+      const key = String(userId || "");
+      if (!key) return;
+      const current = store.getUserProfile(key);
+      const m = meta && typeof meta === "object" ? meta : {};
+      const ts = nowMs();
+      current.username = String(m.username ?? current.username ?? "");
+      current.firstName = String(m.firstName ?? current.firstName ?? "");
+      current.lastName = String(m.lastName ?? current.lastName ?? "");
+      current.lastSeenAt = ts;
+      current.updatedAt = ts;
+      stmtUpsertUserProfile.run(
+        key,
+        String(current.username || ""),
+        String(current.firstName || ""),
+        String(current.lastName || ""),
+        normalizeUserDisplayNameMode(current.displayNameMode),
+        String(current.customDisplayName || ""),
+        String(current.customPrompt1 || ""),
+        String(current.customPrompt2 || ""),
+        normalizeUserPromptSlot(current.activePromptSlot),
+        Number(current.lastSeenAt || ts),
+        Number(current.createdAt || ts),
+        ts
+      );
+    },
+    listUserProfiles() {
+      const rows = stmtListUserProfiles.all();
+      const items = rows.map((r) => ({
+        userId: String(r.user_id || ""),
+        username: String(r.username || ""),
+        firstName: String(r.first_name || ""),
+        lastName: String(r.last_name || ""),
+        displayNameMode: normalizeUserDisplayNameMode(r.display_name_mode),
+        customDisplayName: String(r.custom_display_name || ""),
+        customPrompt1: String(r.custom_prompt_1 || ""),
+        customPrompt2: String(r.custom_prompt_2 || ""),
+        activePromptSlot: normalizeUserPromptSlot(r.active_prompt_slot),
+        lastSeenAt: Number(r.last_seen_at || 0),
+        hasPrompt1: Boolean(String(r.custom_prompt_1 || "").trim()),
+        hasPrompt2: Boolean(String(r.custom_prompt_2 || "").trim())
       }));
       items.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
       return items;
@@ -573,6 +784,22 @@ function rowToConversation(row) {
   };
 }
 
+function rowToUserProfile(row) {
+  return {
+    username: String(row.username || ""),
+    firstName: String(row.first_name || ""),
+    lastName: String(row.last_name || ""),
+    displayNameMode: normalizeUserDisplayNameMode(row.display_name_mode),
+    customDisplayName: String(row.custom_display_name || ""),
+    customPrompt1: String(row.custom_prompt_1 || ""),
+    customPrompt2: String(row.custom_prompt_2 || ""),
+    activePromptSlot: normalizeUserPromptSlot(row.active_prompt_slot),
+    lastSeenAt: Number(row.last_seen_at || 0),
+    createdAt: Number(row.created_at || 0),
+    updatedAt: Number(row.updated_at || 0)
+  };
+}
+
 function safeParseJsonArray(s) {
   try {
     const v = JSON.parse(String(s || "[]"));
@@ -586,7 +813,8 @@ function tryMigrateFromJson({ logger, configStore, db }) {
   const count = Number(db.prepare("SELECT COUNT(*) AS n FROM conversations").get()?.n ?? 0);
   const chatCount = Number(db.prepare("SELECT COUNT(*) AS n FROM chat_settings").get()?.n ?? 0);
   const metaCount = Number(db.prepare("SELECT COUNT(*) AS n FROM meta").get()?.n ?? 0);
-  if (count > 0 || chatCount > 0 || metaCount > 0) return;
+  const userCount = Number(db.prepare("SELECT COUNT(*) AS n FROM user_profiles").get()?.n ?? 0);
+  if (count > 0 || chatCount > 0 || metaCount > 0 || userCount > 0) return;
 
   const cfg = configStore.get();
   const rootDir = resolveAppRootDir();
@@ -597,11 +825,12 @@ function tryMigrateFromJson({ logger, configStore, db }) {
   const jsonState = loadJsonState(statePath);
   const upMeta = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
   const upChat = db.prepare(`
-    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, chat_type, title, username, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, chat_type, title, username, last_seen_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(chat_id) DO UPDATE SET
       provider_id=excluded.provider_id,
       auto_reply=excluded.auto_reply,
+      reply_style=excluded.reply_style,
       chat_type=excluded.chat_type,
       title=excluded.title,
       username=excluded.username,
@@ -622,6 +851,23 @@ function tryMigrateFromJson({ logger, configStore, db }) {
       history_count=excluded.history_count,
       updated_at=excluded.updated_at
   `);
+  const upUser = db.prepare(`
+    INSERT INTO user_profiles (
+      user_id, username, first_name, last_name, display_name_mode, custom_display_name,
+      custom_prompt_1, custom_prompt_2, active_prompt_slot, last_seen_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      username=excluded.username,
+      first_name=excluded.first_name,
+      last_name=excluded.last_name,
+      display_name_mode=excluded.display_name_mode,
+      custom_display_name=excluded.custom_display_name,
+      custom_prompt_1=excluded.custom_prompt_1,
+      custom_prompt_2=excluded.custom_prompt_2,
+      active_prompt_slot=excluded.active_prompt_slot,
+      last_seen_at=excluded.last_seen_at,
+      updated_at=excluded.updated_at
+  `);
 
   try {
     for (const [chatId, chat] of Object.entries(jsonState.chats || {})) {
@@ -629,6 +875,7 @@ function tryMigrateFromJson({ logger, configStore, db }) {
         String(chatId),
         String(chat?.providerId || ""),
         chat?.autoReply ? 1 : 0,
+        normalizeOptionalChatReplyStyle(chat?.replyStyle),
         String(chat?.chatType || ""),
         String(chat?.title || ""),
         String(chat?.username || ""),
@@ -653,6 +900,22 @@ function tryMigrateFromJson({ logger, configStore, db }) {
         Number(c?.updatedAt || nowMs())
       );
     }
+    for (const [userId, profile] of Object.entries(jsonState.userProfiles || {})) {
+      upUser.run(
+        String(userId),
+        String(profile?.username || ""),
+        String(profile?.firstName || ""),
+        String(profile?.lastName || ""),
+        normalizeUserDisplayNameMode(profile?.displayNameMode),
+        String(profile?.customDisplayName || ""),
+        String(profile?.customPrompt1 || ""),
+        String(profile?.customPrompt2 || ""),
+        normalizeUserPromptSlot(profile?.activePromptSlot),
+        Number(profile?.lastSeenAt || 0),
+        Number(profile?.createdAt || nowMs()),
+        Number(profile?.updatedAt || nowMs())
+      );
+    }
     const off = Number(jsonState.telegram?.offset ?? 0);
     if (Number.isFinite(off) && off > 0) upMeta.run("telegram_offset", String(off));
     logger.info("migrated state from json to sqlite");
@@ -660,4 +923,3 @@ function tryMigrateFromJson({ logger, configStore, db }) {
     logger.warn("sqlite migration failed", err);
   }
 }
-

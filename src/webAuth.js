@@ -108,10 +108,10 @@ export function createSessionManager({ cookieName = "dc_session", ttlMs = 24 * 6
 
   return {
     cookieName,
-    create(username) {
+    create(username, role = "admin") {
       const sid = crypto.randomBytes(18).toString("base64url");
       const now = Date.now();
-      sessions.set(sid, { sid, username: String(username || ""), createdAt: now, lastSeenAt: now });
+      sessions.set(sid, { sid, username: String(username || ""), role: String(role || "admin"), createdAt: now, lastSeenAt: now });
       return sid;
     },
     get(sid) {

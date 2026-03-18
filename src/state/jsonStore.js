@@ -2,7 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureDirSync, nowMs } from "../util.js";
 import { resolveAppRootDir } from "../appPaths.js";
-import { clampInt, conversationKey, defaultChatSettings, defaultConversation } from "./common.js";
+import {
+  clampInt,
+  conversationKey,
+  defaultChatSettings,
+  defaultConversation,
+  defaultUserProfile,
+  normalizeOptionalChatReplyStyle,
+  normalizeUserDisplayNameMode,
+  normalizeUserPromptSlot
+} from "./common.js";
 
 export function createJsonStateStore({ logger, configStore }) {
   const cfg = configStore.get();
@@ -26,6 +35,14 @@ export function createJsonStateStore({ logger, configStore }) {
       scheduleFlush();
     }
   });
+
+  store.getBackendInfo = () => ({ type: "json", statePath });
+  store.importRawState = (nextState) => {
+    if (!nextState || typeof nextState !== "object") throw new Error("invalid state");
+    state = nextState;
+    dirty = true;
+    scheduleFlush();
+  };
 
   store.flush = async () => {
     if (!dirty) return;
@@ -120,7 +137,64 @@ function baseStoreApi({ getState, setState, markDirty }) {
           username: String(chat.username || ""),
           lastSeenAt: Number(chat.lastSeenAt || 0),
           providerId: String(chat.providerId || ""),
-          autoReply: Boolean(chat.autoReply)
+          autoReply: Boolean(chat.autoReply),
+          replyStyle: normalizeOptionalChatReplyStyle(chat.replyStyle)
+        });
+      }
+      items.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
+      return items;
+    },
+    getUserProfile(userId) {
+      const state = getState();
+      const key = String(userId || "");
+      if (!key) return defaultUserProfile();
+      state.userProfiles ??= {};
+      state.userProfiles[key] ??= defaultUserProfile();
+      return state.userProfiles[key];
+    },
+    updateUserProfile(userId, updater) {
+      const state = getState();
+      const key = String(userId || "");
+      if (!key) return defaultUserProfile();
+      const profile = this.getUserProfile(key);
+      updater(profile);
+      profile.updatedAt = nowMs();
+      setState(state);
+      markDirty();
+      return profile;
+    },
+    touchUser(userId, meta) {
+      const state = getState();
+      const key = String(userId || "");
+      if (!key) return;
+      const profile = this.getUserProfile(key);
+      const m = meta && typeof meta === "object" ? meta : {};
+      if (m.username !== undefined) profile.username = String(m.username || "");
+      if (m.firstName !== undefined) profile.firstName = String(m.firstName || "");
+      if (m.lastName !== undefined) profile.lastName = String(m.lastName || "");
+      profile.lastSeenAt = nowMs();
+      profile.updatedAt = nowMs();
+      setState(state);
+      markDirty();
+    },
+    listUserProfiles() {
+      const state = getState();
+      const items = [];
+      for (const [userId, profile] of Object.entries(state.userProfiles || {})) {
+        if (!profile || typeof profile !== "object") continue;
+        items.push({
+          userId: String(userId),
+          username: String(profile.username || ""),
+          firstName: String(profile.firstName || ""),
+          lastName: String(profile.lastName || ""),
+          displayNameMode: normalizeUserDisplayNameMode(profile.displayNameMode),
+          customDisplayName: String(profile.customDisplayName || ""),
+          customPrompt1: String(profile.customPrompt1 || ""),
+          customPrompt2: String(profile.customPrompt2 || ""),
+          activePromptSlot: normalizeUserPromptSlot(profile.activePromptSlot),
+          lastSeenAt: Number(profile.lastSeenAt || 0),
+          hasPrompt1: Boolean(String(profile.customPrompt1 || "").trim()),
+          hasPrompt2: Boolean(String(profile.customPrompt2 || "").trim())
         });
       }
       items.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
@@ -300,12 +374,23 @@ function normalizeJsonState(raw) {
   const state = raw && typeof raw === "object" ? raw : {};
   state.chats = state.chats && typeof state.chats === "object" ? state.chats : {};
   state.conversations = state.conversations && typeof state.conversations === "object" ? state.conversations : {};
+  state.userProfiles = state.userProfiles && typeof state.userProfiles === "object" ? state.userProfiles : {};
   state.telegram = state.telegram && typeof state.telegram === "object" ? state.telegram : { offset: 0 };
   state.meta = state.meta && typeof state.meta === "object" ? state.meta : {};
   state.usageDaily = state.usageDaily && typeof state.usageDaily === "object" ? state.usageDaily : {};
 
   for (const [chatId, chat] of Object.entries(state.chats)) {
     if (!chat || typeof chat !== "object") continue;
+    const defaults = defaultChatSettings();
+    chat.providerId = String(chat.providerId || "");
+    chat.autoReply = Boolean(chat.autoReply);
+    chat.replyStyle = normalizeOptionalChatReplyStyle(chat.replyStyle ?? defaults.replyStyle);
+    chat.chatType = String(chat.chatType || "");
+    chat.title = String(chat.title || "");
+    chat.username = String(chat.username || "");
+    chat.lastSeenAt = Number(chat.lastSeenAt || 0);
+    chat.createdAt = Number(chat.createdAt || defaults.createdAt);
+    chat.updatedAt = Number(chat.updatedAt || defaults.updatedAt);
     const hasLegacy =
       "promptId" in chat || "memoryEnabled" in chat || "facts" in chat || "history" in chat || "personaId" in chat;
     if (!hasLegacy) continue;
@@ -327,6 +412,22 @@ function normalizeJsonState(raw) {
     delete chat.history;
   }
 
+  for (const profile of Object.values(state.userProfiles)) {
+    if (!profile || typeof profile !== "object") continue;
+    const defaults = defaultUserProfile();
+    profile.username = String(profile.username || "");
+    profile.firstName = String(profile.firstName || "");
+    profile.lastName = String(profile.lastName || "");
+    profile.displayNameMode = normalizeUserDisplayNameMode(profile.displayNameMode ?? defaults.displayNameMode);
+    profile.customDisplayName = String(profile.customDisplayName || "");
+    profile.customPrompt1 = String(profile.customPrompt1 || "");
+    profile.customPrompt2 = String(profile.customPrompt2 || "");
+    profile.activePromptSlot = normalizeUserPromptSlot(profile.activePromptSlot ?? defaults.activePromptSlot);
+    profile.lastSeenAt = Number(profile.lastSeenAt || 0);
+    profile.createdAt = Number(profile.createdAt || defaults.createdAt);
+    profile.updatedAt = Number(profile.updatedAt || defaults.updatedAt);
+  }
+
   return state;
 }
 
@@ -335,4 +436,3 @@ async function atomicWriteJson(filePath, obj) {
   fs.writeFileSync(tmpPath, `${JSON.stringify(obj, null, 2)}\n`, "utf8");
   fs.renameSync(tmpPath, filePath);
 }
-

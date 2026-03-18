@@ -77,6 +77,7 @@ async function runDailySummaries({ logger, configStore, stateStore, day }) {
       const out = await generateAssistantReply({
         logger,
         provider,
+        security: cfg.security,
         systemPrompt: prompt.system,
         messages: [{ role: "user", content: trimToMaxChars(prompt.user, 80_000) }],
         temperature: 0.2,

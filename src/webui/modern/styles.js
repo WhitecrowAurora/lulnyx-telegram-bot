@@ -119,6 +119,24 @@ textarea{min-height:380px;font-family:var(--mono);font-size:13px;line-height:1.3
 .list{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;padding-right:6px}
 .item{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--surface1)}
 .item .meta{color:var(--muted);font-size:12px}
+.chat-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;max-height:none;padding-right:0}
+.chat-card{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:start;
+  padding:14px;border-radius:16px;border:1px solid var(--border);background:linear-gradient(180deg,var(--surface1),transparent)
+}
+.chat-main{min-width:0}
+.chat-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chat-name{font-weight:700}
+.chat-sub{margin-top:8px;color:var(--muted);font-size:12px;line-height:1.45}
+.chat-tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.chat-actions{display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:220px}
+.chat-actions .row{justify-content:flex-end}
+.chat-actions .btn,.chat-actions .input{width:100%}
+@media (max-width: 760px){
+  .chat-card{grid-template-columns:1fr}
+  .chat-actions{min-width:0}
+  .chat-actions .row{justify-content:stretch}
+}
 .k{font-family:var(--mono);font-size:12px;color:var(--kText)}
 details.details{border:1px solid var(--border);background:var(--surface1);border-radius:12px;padding:10px 12px}
 details.details > summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px}

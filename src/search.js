@@ -1,9 +1,18 @@
 import { normalizeBaseUrl } from "./util.js";
+import { assertOutboundUrlAllowed } from "./security/outbound.js";
 
-export async function searxngSearch({ baseUrl, query, language, safeSearch, categories, maxResults, timeoutMs }) {
+export async function searxngSearch({ baseUrl, query, language, safeSearch, categories, maxResults, timeoutMs, security, allowPrivateNetwork, logger }) {
   const b = normalizeBaseUrl(baseUrl);
   if (!b) throw new Error("search.baseUrl is required");
   if (!query || !String(query).trim()) throw new Error("query is required");
+
+  await assertOutboundUrlAllowed({
+    url: b,
+    security,
+    allowPrivateNetwork: allowPrivateNetwork === true,
+    kind: "search",
+    logger
+  });
 
   const url = new URL(`${b}/search`);
   url.searchParams.set("q", String(query));
@@ -41,7 +50,7 @@ export async function searxngSearch({ baseUrl, query, language, safeSearch, cate
   }
 }
 
-export async function searxngImageSearch({ baseUrl, query, language, safeSearch, maxResults, timeoutMs }) {
+export async function searxngImageSearch({ baseUrl, query, language, safeSearch, maxResults, timeoutMs, security, allowPrivateNetwork, logger }) {
   const results = await searxngSearch({
     baseUrl,
     query,
@@ -49,7 +58,10 @@ export async function searxngImageSearch({ baseUrl, query, language, safeSearch,
     safeSearch,
     categories: "images",
     maxResults,
-    timeoutMs
+    timeoutMs,
+    security,
+    allowPrivateNetwork,
+    logger
   });
   return results
     .map((r) => ({

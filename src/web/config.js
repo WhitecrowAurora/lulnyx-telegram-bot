@@ -68,9 +68,27 @@ export function mergeSecrets({ prev, next }) {
 
   merged.telegram ??= {};
   if (isMaskedOrBlank(merged.telegram.token)) merged.telegram.token = String(p.telegram?.token || "");
+  merged.telegram.delivery ??= {};
+  if (isMaskedOrBlank(merged.telegram.delivery.webhookSecret)) {
+    merged.telegram.delivery.webhookSecret = String(p.telegram?.delivery?.webhookSecret || "");
+  }
 
   merged.web ??= {};
   if (isMaskedOrBlank(merged.web.password)) merged.web.password = String(p.web?.password || "");
+
+  // Optional multi-user support: preserve masked/blank passwords by username.
+  if (Array.isArray(merged.web.users) && Array.isArray(p.web?.users)) {
+    const prevByUser = new Map(p.web.users.map((u) => [String(u?.username || ""), u]));
+    merged.web.users = merged.web.users.map((u) => {
+      const nu = u && typeof u === "object" ? u : {};
+      const username = String(nu.username || "");
+      if (!username) return nu;
+      if (!isMaskedOrBlank(nu.password)) return nu;
+      const old = prevByUser.get(username);
+      if (old && !isMaskedOrBlank(old.password)) nu.password = String(old.password || "");
+      return nu;
+    });
+  }
 
   merged.providers = Array.isArray(merged.providers) ? merged.providers : [];
   const prevById = new Map((Array.isArray(p.providers) ? p.providers : []).map((x) => [String(x?.id || ""), x]));
@@ -89,8 +107,17 @@ export function maskConfig(cfg) {
   const clone = JSON.parse(JSON.stringify(cfg || {}));
   clone.telegram ??= {};
   if (clone.telegram.token) clone.telegram.token = SECRET_MASK;
+  clone.telegram.delivery ??= {};
+  if (clone.telegram.delivery.webhookSecret) clone.telegram.delivery.webhookSecret = SECRET_MASK;
   clone.web ??= {};
   if (clone.web.password) clone.web.password = SECRET_MASK;
+  if (Array.isArray(clone.web.users)) {
+    clone.web.users = clone.web.users.map((u) => {
+      const nu = u && typeof u === "object" ? u : {};
+      if (nu.password) nu.password = SECRET_MASK;
+      return nu;
+    });
+  }
   clone.providers = Array.isArray(clone.providers) ? clone.providers : [];
   clone.providers = clone.providers.map((p) => {
     const pr = p && typeof p === "object" ? p : {};
@@ -120,6 +147,7 @@ export function buildConfigSummary(cfg) {
     },
     telegram: {
       allowAll: c.telegram?.allowAll === true,
+      replyStyleByDefault: String(c.telegram?.replyStyleByDefault || ""),
       allowedChatIdsCount: Array.isArray(c.telegram?.allowedChatIds) ? c.telegram.allowedChatIds.length : 0,
       allowedUserIdsCount: Array.isArray(c.telegram?.allowedUserIds) ? c.telegram.allowedUserIds.length : 0,
       queue: {
@@ -178,11 +206,14 @@ export function buildConfigSummary(cfg) {
   };
 }
 
-export function buildDiagnostics({ cfg, configPath, stateStore }) {
+export function buildDiagnostics({ cfg, configPath, stateStore, logger, logsLines = 400 }) {
   const now = new Date().toISOString();
   const knownChats = safeCall(() => stateStore?.listKnownChats?.()) || [];
   const convKeys = safeCall(() => stateStore?.listConversationKeys?.()) || [];
   const dailyDays = safeCall(() => stateStore?.listDailyDays?.({ limit: 365 })) || [];
+  const rawLogs = safeCall(() => logger?.tail?.(logsLines)) || [];
+  const secrets = collectSecrets(cfg);
+  const logsTail = Array.isArray(rawLogs) ? rawLogs.map((l) => redactText(l, secrets)) : [];
 
   return {
     generatedAt: now,
@@ -196,6 +227,7 @@ export function buildDiagnostics({ cfg, configPath, stateStore }) {
     },
     summary: buildConfigSummary(cfg),
     maskedConfig: maskConfig(cfg),
+    logsTail,
     state: {
       knownChatsCount: Array.isArray(knownChats) ? knownChats.length : 0,
       conversationsCount: Array.isArray(convKeys) ? convKeys.length : 0,
@@ -219,3 +251,27 @@ function safeCall(fn) {
   }
 }
 
+function collectSecrets(cfg) {
+  const c = cfg && typeof cfg === "object" ? cfg : {};
+  const out = [];
+  const tgToken = String(c.telegram?.token || "").trim();
+  if (tgToken) out.push(tgToken);
+  const whSecret = String(c.telegram?.delivery?.webhookSecret || "").trim();
+  if (whSecret) out.push(whSecret);
+  const providers = Array.isArray(c.providers) ? c.providers : [];
+  for (const p of providers) {
+    const k = String(p?.apiKey || "").trim();
+    if (k) out.push(k);
+  }
+  return [...new Set(out)].filter((s) => s.length >= 6);
+}
+
+function redactText(text, secrets) {
+  let out = String(text || "");
+  for (const s of secrets || []) {
+    out = out.split(String(s)).join(SECRET_MASK);
+  }
+  out = out.replace(/(authorization:\s*bearer\s+)[^\s]+/gi, `$1${SECRET_MASK}`);
+  out = out.replace(/(bot)\d{5,12}:[A-Za-z0-9_-]{20,}/g, `$1${SECRET_MASK}`);
+  return out;
+}

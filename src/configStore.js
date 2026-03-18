@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureDirSync, normalizeBaseUrl } from "./util.js";
 import { resolveAppRootDir } from "./appPaths.js";
+import { normalizeOutboundSecurity } from "./security/outbound.js";
+import { normalizeChatReplyStyle } from "./state/common.js";
 
 const CONFIG_FILENAME = "config.json";
 const EXAMPLE_FILENAME = "config.example.json";
@@ -112,6 +114,12 @@ function normalizeConfig(cfg) {
     ? config.telegram.queue.maxPendingPerChat
     : 0; // 0 => unlimited
   config.telegram.autoReplyByDefault = config.telegram.autoReplyByDefault === true;
+  config.telegram.replyStyleByDefault = normalizeChatReplyStyle(config.telegram.replyStyleByDefault);
+  config.telegram.delivery ??= {};
+  config.telegram.delivery.mode = config.telegram.delivery.mode === "webhook" ? "webhook" : "polling";
+  config.telegram.delivery.publicBaseUrl = String(config.telegram.delivery.publicBaseUrl || "");
+  config.telegram.delivery.webhookSecret = String(config.telegram.delivery.webhookSecret || "");
+  config.telegram.delivery.dropPendingUpdates = config.telegram.delivery.dropPendingUpdates === true;
 
   config.server ??= {};
   config.server.host = String(config.server.host || "127.0.0.1");
@@ -131,12 +139,17 @@ function normalizeConfig(cfg) {
   config.search.enabled = config.search.enabled === true;
   config.search.type = String(config.search.type || "searxng");
   config.search.baseUrl = String(config.search.baseUrl || "http://127.0.0.1:8080");
+  config.search.allowPrivateNetwork = config.search.allowPrivateNetwork === true;
   config.search.timeoutMs = Number.isFinite(config.search.timeoutMs) ? config.search.timeoutMs : 10000;
   config.search.maxResults = Number.isFinite(config.search.maxResults) ? config.search.maxResults : 5;
   config.search.language = String(config.search.language || "en");
   config.search.safeSearch = Number.isFinite(config.search.safeSearch) ? config.search.safeSearch : 1;
   config.search.toolCallingEnabled = config.search.toolCallingEnabled === true;
   config.search.toolCallingMaxTurns = Number.isFinite(config.search.toolCallingMaxTurns) ? config.search.toolCallingMaxTurns : 2;
+
+  config.plugins ??= {};
+  config.plugins.dir = String(config.plugins.dir || "plugins");
+  config.plugins.enabledIds = Array.isArray(config.plugins.enabledIds) ? config.plugins.enabledIds.map((x) => String(x || "").trim()).filter(Boolean) : [];
 
   config.providers = Array.isArray(config.providers) ? config.providers : [];
   config.providers = config.providers.map((p) => normalizeProvider(p)).filter((p) => p.id);
@@ -222,6 +235,9 @@ function normalizeConfig(cfg) {
   config.openai.retry.retryOn429 = config.openai.retry.retryOn429 !== false;
   config.openai.retry.retryOn5xx = config.openai.retry.retryOn5xx !== false;
 
+  config.security ??= {};
+  config.security = normalizeOutboundSecurity(config.security);
+
   return config;
 }
 
@@ -236,6 +252,7 @@ function normalizeProvider(p) {
   provider.responsesStyle = String(provider.responsesStyle || "instructions+messages");
   provider.responsesContentFormat = String(provider.responsesContentFormat || "text");
   provider.extraHeaders = typeof provider.extraHeaders === "object" && provider.extraHeaders ? provider.extraHeaders : {};
+  provider.allowPrivateNetwork = provider.allowPrivateNetwork === true;
   return provider;
 }
 

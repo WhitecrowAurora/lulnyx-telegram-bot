@@ -1,8 +1,10 @@
 import { normalizeBaseUrl, sleep, trimToMaxChars } from "./util.js";
+import { assertOutboundUrlAllowed } from "./security/outbound.js";
 
 export async function generateAssistantReply({
   logger,
   provider,
+  security,
   systemPrompt,
   messages,
   temperature,
@@ -18,6 +20,13 @@ export async function generateAssistantReply({
   if (!provider?.model) throw new Error("provider.model is required");
 
   const baseUrl = normalizeBaseUrl(provider.baseUrl);
+  await assertOutboundUrlAllowed({
+    url: baseUrl,
+    security,
+    allowPrivateNetwork: provider.allowPrivateNetwork === true,
+    kind: "provider",
+    logger
+  });
   const headers = {
     "content-type": "application/json",
     ...normalizeHeaders(provider.extraHeaders)

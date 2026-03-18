@@ -41,6 +41,7 @@ export async function maybeCompressHistory({ logger, cfg, stateStore, chatId, us
   const out = await generateAssistantReply({
     logger,
     provider,
+    security: cfg.security,
     systemPrompt,
     messages: [{ role: "user", content: trimToMaxChars(transcript, 60_000) }],
     temperature: 0.2,
@@ -79,4 +80,3 @@ export async function maybeCompressHistory({ logger, cfg, stateStore, chatId, us
 
   return true;
 }
-

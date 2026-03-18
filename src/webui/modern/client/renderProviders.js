@@ -65,6 +65,15 @@ function renderProviders(providers, defId) {
     const model = mk(I.labelModel, "text", "model", "gpt-4.1-mini");
     mk(I.labelApiKey + " (" + I.keepBlank + ")", "password", "apiKey", I.keepBlank).value = "";
 
+    const apnL = document.createElement("label");
+    apnL.textContent = I.labelAllowPrivateNetwork;
+    const apn = document.createElement("select");
+    apn.className = "input";
+    apn.dataset.field = "allowPrivateNetwork";
+    apn.innerHTML = '<option value="false">false</option><option value="true">true</option>';
+    body.appendChild(apnL);
+    body.appendChild(apn);
+
     const rsL = document.createElement("label");
     rsL.textContent = I.labelResponsesStyle;
     const rs = document.createElement("select");
@@ -91,6 +100,7 @@ function renderProviders(providers, defId) {
     baseUrl.value = p && p.baseUrl ? p.baseUrl : "";
     apiType.value = p && p.apiType ? p.apiType : "responses";
     model.value = p && p.model ? p.model : "";
+    apn.value = p && p.allowPrivateNetwork === true ? "true" : "false";
     rs.value = p && p.responsesStyle ? p.responsesStyle : "instructions+messages";
     cf.value = p && p.responsesContentFormat ? p.responsesContentFormat : "text";
     eh.value = p && p.extraHeaders && typeof p.extraHeaders === "object" ? JSON.stringify(p.extraHeaders, null, 2) : "";
@@ -141,4 +151,3 @@ function refreshDefaultProviderOptions() {
 }
 `;
 }
-

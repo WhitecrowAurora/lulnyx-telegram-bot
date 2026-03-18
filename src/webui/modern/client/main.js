@@ -3,7 +3,10 @@ export function renderClientMain() {
 async function onViewEnter(name) {
   if (name === "tools-analytics") await loadStats();
   if (name === "tools-daily") await loadDailyDays();
+  if (name === "tools-plugins") await loadPlugins();
+  if (name === "tools-users") await loadUsers();
   if (name === "settings-longterm") await loadManualPersona();
+  if (name === "settings-basics") await loadTelegramStatus();
 }
 
 $("btnSave").addEventListener("click", saveConfig);
@@ -14,6 +17,8 @@ $("btnLogout").addEventListener("click", async () => {
 });
 $("btnChats").addEventListener("click", loadChats);
 $("chatFilter").addEventListener("input", renderChats);
+$("btnUsers").addEventListener("click", loadUsers);
+$("userFilter").addEventListener("input", renderUsers);
 $("btnConvRefresh").addEventListener("click", refreshConvList);
 $("convFilter").addEventListener("input", renderConvList);
 $("btnConvSave").addEventListener("click", saveConversation);
@@ -21,9 +26,11 @@ $("btnConvDelete").addEventListener("click", deleteConversation);
 $("btnSearch").addEventListener("click", doSearch);
 $("btnStatsRefresh").addEventListener("click", loadStats);
 $("btnDailyRefresh").addEventListener("click", loadDailyDays);
+$("btnPluginsRefresh").addEventListener("click", loadPlugins);
 $("btnPersonaLoad").addEventListener("click", loadManualPersona);
 $("btnPersonaSave").addEventListener("click", saveManualPersona);
 $("btnSummary").addEventListener("click", loadSummary);
+if ($("btnTgStatus")) $("btnTgStatus").addEventListener("click", loadTelegramStatus);
 $("providers").addEventListener("input", (e) => {
   if (e && e.target && e.target.dataset && e.target.dataset.field === "id") refreshDefaultProviderOptions();
 });
@@ -81,6 +88,7 @@ $("btnAddPersona").addEventListener("click", () => {
   await loadConfig();
   await loadSummary();
   await loadChats();
+  await loadUsers();
   await refreshConvList();
   const v = decodeURIComponent(String(location.hash || "").replace(/^#/, "")) || "overview";
   setView(v, { pushHash: false });

@@ -1,7 +1,8 @@
-export function buildSystemPrompt({ promptSystem, personaSystem, chatInfo, rules, facts, summaryText, longTermMemory, longTermPersona }) {
+export function buildSystemPrompt({ promptSystem, personaSystem, userPrompt, chatInfo, rules, facts, summaryText, longTermMemory, longTermPersona }) {
   const parts = [];
   const p = String(promptSystem || "").trim();
   const persona = String(personaSystem || "").trim();
+  const user = String(userPrompt || "").trim();
   const info = String(chatInfo || "").trim();
   const rs = Array.isArray(rules) ? rules.map((x) => String(x)).filter(Boolean) : [];
   const fs = Array.isArray(facts) ? facts.map((x) => String(x)).filter(Boolean) : [];
@@ -11,6 +12,7 @@ export function buildSystemPrompt({ promptSystem, personaSystem, chatInfo, rules
 
   if (p) parts.push(p);
   if (persona) parts.push(persona);
+  if (user) parts.push(`### Per-user prompt\n${user}`);
   if (info) parts.push(`### Chat info\n${info}`);
   if (rs.length) parts.push(`### Rules\n${rs.map((r) => `- ${r}`).join("\n")}`);
   if (fs.length) parts.push(`### Memory facts\n${fs.map((f) => `- ${f}`).join("\n")}`);
@@ -26,7 +28,7 @@ export function buildChatInfo({ chatId, userId, chatType, chatSettings, sender }
   const type = String(chatType || chatSettings?.chatType || "").trim();
   if (type) parts.push(`chat_type: ${type}`);
   if ((type === "group" || type === "supergroup") && chatSettings?.title) parts.push(`chat_title: ${String(chatSettings.title)}`);
-  const name = formatSenderName(sender);
+  const name = String(sender?.preferredName || "").trim() || formatSenderName(sender);
   if (name) parts.push(`user: ${name} (id ${String(userId)})`);
   else parts.push(`user_id: ${String(userId)}`);
   parts.push(`chat_id: ${String(chatId)}`);
@@ -42,4 +44,3 @@ export function formatSenderName(sender) {
   const full = `${first} ${last}`.trim();
   return full;
 }
-

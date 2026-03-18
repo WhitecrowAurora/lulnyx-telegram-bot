@@ -9,6 +9,13 @@
     "allowedChatIds": [],
     "allowedUserIds": [],
     "autoReplyByDefault": false,
+    "replyStyleByDefault": "reply_and_mention",
+    "delivery": {
+      "mode": "polling",
+      "publicBaseUrl": "https://example.com",
+      "webhookSecret": "CHANGE_ME",
+      "dropPendingUpdates": false
+    },
     "queue": {
       "minIntervalMs": 0,
       "maxConcurrentJobs": 0,
@@ -33,12 +40,26 @@
     "enabled": false,
     "type": "searxng",
     "baseUrl": "http://127.0.0.1:8080",
+    "allowPrivateNetwork": true,
     "timeoutMs": 10000,
     "maxResults": 5,
     "language": "en",
     "safeSearch": 1,
     "toolCallingEnabled": false,
     "toolCallingMaxTurns": 2
+  },
+  "security": {
+    "outbound": {
+      "blockPrivateNetworks": true,
+      "dnsResolve": true,
+      "dnsTimeoutMs": 800,
+      "denyOnResolveFailure": false,
+      "allowedHostSuffixes": []
+    }
+  },
+  "plugins": {
+    "dir": "plugins",
+    "enabledIds": []
   },
   "providers": [
     {

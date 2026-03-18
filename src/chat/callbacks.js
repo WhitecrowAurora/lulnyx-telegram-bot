@@ -1,6 +1,7 @@
 import { bt } from "../botI18n.js";
 import { clearConversationHistory } from "./commands.js";
 import { menuMarkup, menuText, parseCallbackData } from "./menu.js";
+import { normalizeUserDisplayNameMode, normalizeUserPromptSlot } from "../state/common.js";
 
 export async function handleCallbackQueryInternal({ logger, configStore, stateStore, chatId, userId, chatType, messageId, data, lang }) {
   const t = (key, vars) => bt(lang, key, vars);
@@ -62,6 +63,55 @@ export async function handleCallbackQueryInternal({ logger, configStore, stateSt
         replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "root", lang })
       };
     }
+
+    if (key === "userprompt") {
+      const next = normalizeUserPromptSlot(value);
+      const profile = stateStore.getUserProfile?.(userId);
+      if (!profile) return { text: t("profile.slot_invalid"), mode: "send" };
+      if (next === "slot1" && !String(profile.customPrompt1 || "").trim()) {
+        return {
+          text: t("cb.user_prompt_empty", { slot: t("profile.user_prompt_slot1") }),
+          mode: "edit",
+          replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "userprompt", lang })
+        };
+      }
+      if (next === "slot2" && !String(profile.customPrompt2 || "").trim()) {
+        return {
+          text: t("cb.user_prompt_empty", { slot: t("profile.user_prompt_slot2") }),
+          mode: "edit",
+          replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "userprompt", lang })
+        };
+      }
+      stateStore.updateUserProfile?.(userId, (p) => {
+        p.activePromptSlot = next;
+      });
+      return {
+        text: next ? t("profile.prompt_active", { slot: t(`profile.user_prompt_${next}`) }) : t("profile.prompt_active_off"),
+        mode: "edit",
+        replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "root", lang })
+      };
+    }
+
+    if (key === "namemode") {
+      const next = normalizeUserDisplayNameMode(value);
+      const profile = stateStore.getUserProfile?.(userId);
+      if (!profile) return { text: t("err.unknown_action"), mode: "send" };
+      if (next === "custom" && !String(profile.customDisplayName || "").trim()) {
+        return {
+          text: t("cb.name_mode_custom_missing"),
+          mode: "edit",
+          replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "name", lang })
+        };
+      }
+      stateStore.updateUserProfile?.(userId, (p) => {
+        p.displayNameMode = next;
+      });
+      return {
+        text: t("profile.name_mode_set", { mode: t(`profile.name_mode_${next}`) }),
+        mode: "edit",
+        replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "root", lang })
+      };
+    }
   }
 
   if (parsed.type === "do") {
@@ -73,8 +123,14 @@ export async function handleCallbackQueryInternal({ logger, configStore, stateSt
         replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "root", lang })
       };
     }
+    if (parsed.value === "namehelp") {
+      return {
+        text: t("cb.name_help"),
+        mode: "edit",
+        replyMarkup: menuMarkup({ configStore, stateStore, chatId, userId, chatType, screen: "name", lang })
+      };
+    }
   }
 
   return { text: t("err.unknown_action"), mode: "send" };
 }
-

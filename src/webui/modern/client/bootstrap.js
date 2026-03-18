@@ -29,10 +29,12 @@ const I = {
   errReload: ${tj("err.reload")},
   errSave: ${tj("err.save")},
   errLoadChats: ${tj("err.load_chats")},
+  errLoadUsers: ${tj("err.load_users")},
   errListConversations: ${tj("err.list_conversations")},
   errLoadConversation: ${tj("err.load_conversation")},
   errDelete: ${tj("err.delete")},
   errSearch: ${tj("err.search")},
+  errTelegramStatus: ${tj("err.telegram_status")},
 
   noResults: ${tj("search.no_results")},
   confirmDeleteConversation: ${tj("confirm.delete_conversation")},
@@ -41,6 +43,14 @@ const I = {
   actionCopy: ${tj("action.copy")},
   actionAllow: ${tj("action.allow")},
   actionRemove: ${tj("action.remove")},
+  actionApply: ${tj("action.apply")},
+  actionSave: ${tj("action.save")},
+
+  fieldDisplayNameMode: ${tj("field.display_name_mode")},
+  fieldCustomDisplayName: ${tj("field.custom_display_name")},
+  fieldActiveCustomPrompt: ${tj("field.active_custom_prompt")},
+  fieldCustomPrompt1: ${tj("field.custom_prompt_1")},
+  fieldCustomPrompt2: ${tj("field.custom_prompt_2")},
 
   labelId: ${tj("label.id")},
   labelName: ${tj("label.name")},
@@ -51,8 +61,19 @@ const I = {
   labelExtraHeaders: ${tj("label.extra_headers")},
   labelResponsesStyle: ${tj("label.responses_style")},
   labelResponsesContentFormat: ${tj("label.responses_content_format")},
+  labelAllowPrivateNetwork: ${tj("label.allow_private_network")},
   labelSystemPrompt: ${tj("label.system_prompt")},
   labelSystemPersona: ${tj("label.system_persona")},
+  labelReplyStyleDefault: ${tj("label.reply_style_default")},
+  labelProviderCurrent: ${tj("label.provider_current")},
+  labelLastActive: ${tj("label.last_active")},
+  labelUsername: ${tj("label.username")},
+  labelUserId: ${tj("label.user_id")},
+  labelFullName: ${tj("label.full_name")},
+  labelReplyOnly: ${tj("label.reply_only")},
+  labelReplyAndMention: ${tj("label.reply_and_mention")},
+  labelMentionOnly: ${tj("label.mention_only")},
+  labelNotConfigured: ${tj("label.not_configured")},
 
   wordProvider: ${tj("word.provider")},
   wordPrompt: ${tj("word.prompt")},
@@ -64,9 +85,23 @@ const I = {
   metaIdPrefix: ${tj("meta.id_prefix")},
   metaIdMissing: ${tj("meta.id_missing")},
   metaClickToOpen: ${tj("meta.click_to_open")},
+  timeNever: ${tj("time.never")},
 
   autoReplyOn: ${tj("chats.autoreply_on")},
-  autoReplyOff: ${tj("chats.autoreply_off")}
+  autoReplyOff: ${tj("chats.autoreply_off")},
+  usersNoProfiles: ${tj("users.no_profiles")},
+  usersPromptOff: ${tj("users.prompt_off")},
+  usersPromptSlot1: ${tj("users.prompt_slot1")},
+  usersPromptSlot2: ${tj("users.prompt_slot2")},
+  usersModeUsername: ${tj("users.mode_username")},
+  usersModeCustom: ${tj("users.mode_custom")},
+  userProfileSaved: ${tj("toast.user_profile_saved")},
+
+  pluginsNone: ${tj("plugins.none")},
+  pluginsNewFound: ${tj("plugins.new_found")},
+  pluginsEnable: ${tj("plugins.enable")},
+  pluginsDisable: ${tj("plugins.disable")},
+  telegramStatusLoaded: ${tj("toast.telegram_status_loaded")}
 };
 `;
 }

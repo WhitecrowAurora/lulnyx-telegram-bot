@@ -26,6 +26,9 @@ export function createTelegramApi({ token, logger }) {
   return {
     getUpdates: (params) => call("getUpdates", params),
     getMe: () => call("getMe", {}),
+    getWebhookInfo: () => call("getWebhookInfo", {}),
+    setWebhook: (params) => call("setWebhook", params),
+    deleteWebhook: (params) => call("deleteWebhook", params ?? {}),
     sendMessage: (params) => call("sendMessage", params),
     sendPhoto: (params) => call("sendPhoto", params),
     sendChatAction: (params) => call("sendChatAction", params),

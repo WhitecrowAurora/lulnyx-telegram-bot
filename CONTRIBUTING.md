@@ -29,7 +29,7 @@ Thanks for your interest in contributing.
 
 ### 提交 PR
 
-- 尽量保存代码简洁且最少化改动。
+- 尽量保持改动小而聚焦。
 - 不要提交任何密钥/Token。仓库默认忽略 `config.json` 和 `data/*` 状态文件。
 - UI 文案保持中英文同步（`src/webui/modern/i18n.js` 与 `src/botI18n.js`）。
 

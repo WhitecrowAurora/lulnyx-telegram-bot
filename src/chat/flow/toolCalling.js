@@ -24,6 +24,7 @@ export async function generateWithTools({ logger, cfg, provider, systemPrompt, m
     const out = await generateAssistantReply({
       logger,
       provider,
+      security: cfg.security,
       systemPrompt: sys,
       messages: currentMessages,
       temperature: cfg.openai.temperature,
@@ -60,7 +61,10 @@ export async function generateWithTools({ logger, cfg, provider, systemPrompt, m
           language: cfg.search.language,
           safeSearch: cfg.search.safeSearch,
           maxResults,
-          timeoutMs: cfg.search.timeoutMs
+          timeoutMs: cfg.search.timeoutMs,
+          security: cfg.security,
+          allowPrivateNetwork: cfg.search.allowPrivateNetwork,
+          logger
         });
         resultText = formatImageResults(imgs);
       } else {
@@ -71,7 +75,10 @@ export async function generateWithTools({ logger, cfg, provider, systemPrompt, m
           safeSearch: cfg.search.safeSearch,
           categories: cfg.search.categories || "",
           maxResults,
-          timeoutMs: cfg.search.timeoutMs
+          timeoutMs: cfg.search.timeoutMs,
+          security: cfg.security,
+          allowPrivateNetwork: cfg.search.allowPrivateNetwork,
+          logger
         });
         resultText = formatWebResults(results);
       }
@@ -117,4 +124,3 @@ function formatImageResults(results) {
   }
   return lines.join("\n").trim();
 }
-

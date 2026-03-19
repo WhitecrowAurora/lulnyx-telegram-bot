@@ -12,19 +12,30 @@ export function renderLoginPage({ appName, configPath, message, ui, nonce }) {
     ui,
     nonce,
     content: `
-      <div class="card" style="max-width:520px;margin:32px auto 0">
-        <h2 style="margin:0 0 8px">${escapeHtml(t(lang, "login.sign_in"))}</h2>
-        <div class="sub">${escapeHtml(t(lang, "login.protected"))}</div>
-        ${msg}
-        <form id="f" autocomplete="off">
-          <label>${escapeHtml(t(lang, "login.username"))}</label>
-          <input class="input" name="username" placeholder="admin" required />
-          <label>${escapeHtml(t(lang, "login.password"))}</label>
-          <input class="input" name="password" type="password" placeholder="••••••••" required />
-          <div class="row" style="margin-top:14px;justify-content:flex-end">
-            <button class="btn primary" type="submit">${escapeHtml(t(lang, "login.login"))}</button>
+      <div class="auth-shell">
+        <div class="card auth-side">
+          <div class="hero-kicker">${escapeHtml(t(lang, "page.login"))}</div>
+          <h2 class="auth-title">${escapeHtml(t(lang, "login.sign_in"))}</h2>
+          <div class="sub auth-note">${escapeHtml(t(lang, "login.protected"))}</div>
+          <div class="auth-pills">
+            <span class="pill">${escapeHtml(t(lang, "page.dashboard"))}</span>
+            <span class="pill">${escapeHtml(t(lang, "nav.settings"))}</span>
+            <span class="pill">${escapeHtml(t(lang, "nav.tools"))}</span>
           </div>
-        </form>
+          <div class="sub auth-note">${escapeHtml(t(lang, "login.side_note"))}</div>
+        </div>
+        <div class="card auth-form">
+          ${msg}
+          <form id="f" autocomplete="off">
+            <label>${escapeHtml(t(lang, "login.username"))}</label>
+            <input class="input" name="username" placeholder="admin" required />
+            <label>${escapeHtml(t(lang, "login.password"))}</label>
+            <input class="input" name="password" type="password" placeholder="••••••••" required />
+            <div class="row" style="justify-content:flex-end">
+              <button class="btn primary" type="submit">${escapeHtml(t(lang, "login.login"))}</button>
+            </div>
+          </form>
+        </div>
       </div>
       <script nonce="${escapeHtml(String(nonce || ""))}">
         const toast=(t,ok=true)=>{const el=document.getElementById('toast');const d=document.createElement('div');d.className='msg '+(ok?'ok':'err');d.textContent=t;el.appendChild(d);setTimeout(()=>d.remove(),3200)};

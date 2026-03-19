@@ -6,6 +6,8 @@ import {
   clampInt,
   conversationKey,
   defaultUserProfile,
+  normalizeGlobalPersonaMode,
+  normalizeGlobalPersonaQueue,
   normalizeGlobalPersonaReplyCount,
   normalizeGlobalPersonaReplyLimit,
   normalizeUserProfileState,
@@ -38,9 +40,12 @@ export async function createSqliteStateStore({ logger, configStore }) {
       auto_reply INTEGER NOT NULL DEFAULT 0,
       reply_style TEXT NOT NULL DEFAULT 'reply_and_mention',
       global_persona_enabled INTEGER NOT NULL DEFAULT 0,
+      global_persona_mode TEXT NOT NULL DEFAULT 'single',
       global_persona_user_id TEXT NOT NULL DEFAULT '',
       global_persona_reply_limit INTEGER NOT NULL DEFAULT 100,
       global_persona_reply_count INTEGER NOT NULL DEFAULT 0,
+      global_persona_queue_json TEXT NOT NULL DEFAULT '[]',
+      global_persona_cursor INTEGER NOT NULL DEFAULT 0,
       chat_type TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL DEFAULT '',
       username TEXT NOT NULL DEFAULT '',
@@ -118,6 +123,9 @@ export async function createSqliteStateStore({ logger, configStore }) {
     db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_enabled INTEGER NOT NULL DEFAULT 0");
   } catch {}
   try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_mode TEXT NOT NULL DEFAULT 'single'");
+  } catch {}
+  try {
     db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_user_id TEXT NOT NULL DEFAULT ''");
   } catch {}
   try {
@@ -125,6 +133,12 @@ export async function createSqliteStateStore({ logger, configStore }) {
   } catch {}
   try {
     db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_reply_count INTEGER NOT NULL DEFAULT 0");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_queue_json TEXT NOT NULL DEFAULT '[]'");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE chat_settings ADD COLUMN global_persona_cursor INTEGER NOT NULL DEFAULT 0");
   } catch {}
   try {
     db.exec("ALTER TABLE chat_settings ADD COLUMN chat_type TEXT NOT NULL DEFAULT ''");
@@ -196,19 +210,26 @@ export async function createSqliteStateStore({ logger, configStore }) {
   const stmtGetMeta = db.prepare("SELECT value FROM meta WHERE key = ?");
   const stmtUpsertMeta = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
   const stmtGetChat = db.prepare(
-    "SELECT chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings WHERE chat_id = ?"
+    "SELECT chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_mode, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, global_persona_queue_json, global_persona_cursor, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings WHERE chat_id = ?"
   );
   const stmtUpsertChat = db.prepare(`
-    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chat_settings (
+      chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_mode, global_persona_user_id,
+      global_persona_reply_limit, global_persona_reply_count, global_persona_queue_json, global_persona_cursor,
+      chat_type, title, username, last_seen_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(chat_id) DO UPDATE SET
       provider_id=excluded.provider_id,
       auto_reply=excluded.auto_reply,
       reply_style=excluded.reply_style,
       global_persona_enabled=excluded.global_persona_enabled,
+      global_persona_mode=excluded.global_persona_mode,
       global_persona_user_id=excluded.global_persona_user_id,
       global_persona_reply_limit=excluded.global_persona_reply_limit,
       global_persona_reply_count=excluded.global_persona_reply_count,
+      global_persona_queue_json=excluded.global_persona_queue_json,
+      global_persona_cursor=excluded.global_persona_cursor,
       chat_type=excluded.chat_type,
       title=excluded.title,
       username=excluded.username,
@@ -216,7 +237,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
       updated_at=excluded.updated_at
   `);
   const stmtListChats = db.prepare(
-    "SELECT chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings"
+    "SELECT chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_mode, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, global_persona_queue_json, global_persona_cursor, chat_type, title, username, last_seen_at, created_at, updated_at FROM chat_settings"
   );
 
   const stmtGetConv = db.prepare(`
@@ -351,17 +372,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
     getRaw() {
       const chats = {};
       for (const r of stmtListChats.all()) {
-        chats[String(r.chat_id)] = {
-          providerId: String(r.provider_id || ""),
-          autoReply: Boolean(Number(r.auto_reply || 0)),
-          replyStyle: normalizeOptionalChatReplyStyle(r.reply_style),
-          globalPersonaEnabled: Boolean(Number(r.global_persona_enabled || 0)),
-          globalPersonaUserId: String(r.global_persona_user_id || ""),
-          globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(r.global_persona_reply_limit),
-          globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(r.global_persona_reply_count),
-          createdAt: Number(r.created_at || 0),
-          updatedAt: Number(r.updated_at || 0)
-        };
+        chats[String(r.chat_id)] = rowToChatSettings(r);
       }
       const conversations = {};
       for (const r of stmtListConvs.all()) {
@@ -427,33 +438,20 @@ export async function createSqliteStateStore({ logger, configStore }) {
     getChatSettings(chatId) {
       const key = String(chatId);
       const row = stmtGetChat.get(key);
-      if (row) {
-        return {
-          providerId: String(row.provider_id || ""),
-          autoReply: Boolean(Number(row.auto_reply || 0)),
-          replyStyle: normalizeOptionalChatReplyStyle(row.reply_style),
-          globalPersonaEnabled: Boolean(Number(row.global_persona_enabled || 0)),
-          globalPersonaUserId: String(row.global_persona_user_id || ""),
-          globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(row.global_persona_reply_limit),
-          globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(row.global_persona_reply_count),
-          chatType: String(row.chat_type || ""),
-          title: String(row.title || ""),
-          username: String(row.username || ""),
-          lastSeenAt: Number(row.last_seen_at || 0),
-          createdAt: Number(row.created_at || 0),
-          updatedAt: Number(row.updated_at || 0)
-        };
-      }
+      if (row) return rowToChatSettings(row);
       const ts = nowMs();
-      stmtUpsertChat.run(key, "", 0, "", 0, "", 100, 0, "", "", "", 0, ts, ts);
+      stmtUpsertChat.run(key, "", 0, "", 0, "single", "", 100, 0, "[]", 0, "", "", "", 0, ts, ts);
       return {
         providerId: "",
         autoReply: false,
         replyStyle: "",
         globalPersonaEnabled: false,
+        globalPersonaMode: "single",
         globalPersonaUserId: "",
         globalPersonaReplyLimit: 100,
         globalPersonaReplyCount: 0,
+        globalPersonaQueue: [],
+        globalPersonaCursor: 0,
         chatType: "",
         title: "",
         username: "",
@@ -474,9 +472,12 @@ export async function createSqliteStateStore({ logger, configStore }) {
         current.autoReply ? 1 : 0,
         normalizeOptionalChatReplyStyle(current.replyStyle),
         current.globalPersonaEnabled ? 1 : 0,
+        normalizeGlobalPersonaMode(current.globalPersonaMode),
         String(current.globalPersonaUserId || ""),
         normalizeGlobalPersonaReplyLimit(current.globalPersonaReplyLimit),
         normalizeGlobalPersonaReplyCount(current.globalPersonaReplyCount),
+        JSON.stringify(normalizeGlobalPersonaQueue(current.globalPersonaQueue)),
+        clampInt(current.globalPersonaCursor, 0, 1000000),
         String(current.chatType || ""),
         String(current.title || ""),
         String(current.username || ""),
@@ -502,9 +503,12 @@ export async function createSqliteStateStore({ logger, configStore }) {
         current.autoReply ? 1 : 0,
         normalizeOptionalChatReplyStyle(current.replyStyle),
         current.globalPersonaEnabled ? 1 : 0,
+        normalizeGlobalPersonaMode(current.globalPersonaMode),
         String(current.globalPersonaUserId || ""),
         normalizeGlobalPersonaReplyLimit(current.globalPersonaReplyLimit),
         normalizeGlobalPersonaReplyCount(current.globalPersonaReplyCount),
+        JSON.stringify(normalizeGlobalPersonaQueue(current.globalPersonaQueue)),
+        clampInt(current.globalPersonaCursor, 0, 1000000),
         String(current.chatType || ""),
         String(current.title || ""),
         String(current.username || ""),
@@ -517,17 +521,7 @@ export async function createSqliteStateStore({ logger, configStore }) {
       const rows = stmtListChats.all();
       const items = rows.map((r) => ({
         chatId: String(r.chat_id),
-        chatType: String(r.chat_type || ""),
-        title: String(r.title || ""),
-        username: String(r.username || ""),
-        lastSeenAt: Number(r.last_seen_at || 0),
-        providerId: String(r.provider_id || ""),
-        autoReply: Boolean(Number(r.auto_reply || 0)),
-        replyStyle: normalizeOptionalChatReplyStyle(r.reply_style),
-        globalPersonaEnabled: Boolean(Number(r.global_persona_enabled || 0)),
-        globalPersonaUserId: String(r.global_persona_user_id || ""),
-        globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(r.global_persona_reply_limit),
-        globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(r.global_persona_reply_count)
+        ...rowToChatSettings(r)
       }));
       items.sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
       return items;
@@ -855,6 +849,28 @@ function rowToConversation(row) {
   };
 }
 
+function rowToChatSettings(row) {
+  const queue = normalizeGlobalPersonaQueue(safeParseJsonArray(row.global_persona_queue_json));
+  return {
+    providerId: String(row.provider_id || ""),
+    autoReply: Boolean(Number(row.auto_reply || 0)),
+    replyStyle: normalizeOptionalChatReplyStyle(row.reply_style),
+    globalPersonaEnabled: Boolean(Number(row.global_persona_enabled || 0)),
+    globalPersonaMode: normalizeGlobalPersonaMode(row.global_persona_mode),
+    globalPersonaUserId: String(row.global_persona_user_id || ""),
+    globalPersonaReplyLimit: normalizeGlobalPersonaReplyLimit(row.global_persona_reply_limit),
+    globalPersonaReplyCount: normalizeGlobalPersonaReplyCount(row.global_persona_reply_count),
+    globalPersonaQueue: queue,
+    globalPersonaCursor: clampInt(row.global_persona_cursor, 0, 1000000),
+    chatType: String(row.chat_type || ""),
+    title: String(row.title || ""),
+    username: String(row.username || ""),
+    lastSeenAt: Number(row.last_seen_at || 0),
+    createdAt: Number(row.created_at || 0),
+    updatedAt: Number(row.updated_at || 0)
+  };
+}
+
 function rowToUserProfile(row) {
   return normalizeUserProfileState({
     username: String(row.username || ""),
@@ -898,16 +914,23 @@ function tryMigrateFromJson({ logger, configStore, db }) {
   const jsonState = loadJsonState(statePath);
   const upMeta = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
   const upChat = db.prepare(`
-    INSERT INTO chat_settings (chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_user_id, global_persona_reply_limit, global_persona_reply_count, chat_type, title, username, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chat_settings (
+      chat_id, provider_id, auto_reply, reply_style, global_persona_enabled, global_persona_mode, global_persona_user_id,
+      global_persona_reply_limit, global_persona_reply_count, global_persona_queue_json, global_persona_cursor,
+      chat_type, title, username, last_seen_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(chat_id) DO UPDATE SET
       provider_id=excluded.provider_id,
       auto_reply=excluded.auto_reply,
       reply_style=excluded.reply_style,
       global_persona_enabled=excluded.global_persona_enabled,
+      global_persona_mode=excluded.global_persona_mode,
       global_persona_user_id=excluded.global_persona_user_id,
       global_persona_reply_limit=excluded.global_persona_reply_limit,
       global_persona_reply_count=excluded.global_persona_reply_count,
+      global_persona_queue_json=excluded.global_persona_queue_json,
+      global_persona_cursor=excluded.global_persona_cursor,
       chat_type=excluded.chat_type,
       title=excluded.title,
       username=excluded.username,
@@ -956,9 +979,12 @@ function tryMigrateFromJson({ logger, configStore, db }) {
         chat?.autoReply ? 1 : 0,
         normalizeOptionalChatReplyStyle(chat?.replyStyle),
         chat?.globalPersonaEnabled ? 1 : 0,
+        normalizeGlobalPersonaMode(chat?.globalPersonaMode),
         String(chat?.globalPersonaUserId || ""),
         normalizeGlobalPersonaReplyLimit(chat?.globalPersonaReplyLimit),
         normalizeGlobalPersonaReplyCount(chat?.globalPersonaReplyCount),
+        JSON.stringify(normalizeGlobalPersonaQueue(chat?.globalPersonaQueue)),
+        clampInt(chat?.globalPersonaCursor, 0, 1000000),
         String(chat?.chatType || ""),
         String(chat?.title || ""),
         String(chat?.username || ""),

@@ -62,7 +62,7 @@ function setView(name, { pushHash = true } = {}) {
   }
 }
 
-for (const b of document.querySelectorAll(".nav-item[data-view]")) {
+for (const b of document.querySelectorAll("[data-view]")) {
   b.addEventListener("click", () => setView(b.dataset.view || "overview"));
 }
 
@@ -72,4 +72,3 @@ window.addEventListener("hashchange", () => {
 });
 `;
 }
-

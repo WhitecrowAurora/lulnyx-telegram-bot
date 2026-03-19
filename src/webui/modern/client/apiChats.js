@@ -25,6 +25,14 @@ function formatReplyLimit(limit) {
   return Number.isFinite(value) && value > 0 ? String(Math.trunc(value)) : I.labelUnlimited;
 }
 
+function formatGlobalPersonaMode(mode, enabled) {
+  if (!enabled) return I.globalPersonaOff;
+  const value = String(mode || "single");
+  if (value === "sequential") return I.globalPersonaModeSequential;
+  if (value === "random") return I.globalPersonaModeRandom;
+  return I.globalPersonaModeSingle;
+}
+
 function renderChats() {
   const filter = String($("chatFilter")?.value || "").trim().toLowerCase();
   const el = $("chats");
@@ -41,10 +49,13 @@ function renderChats() {
     const providerInherited = c?.providerInherited === true;
     const lastSeenText = formatLastSeen(c?.lastSeenAt);
     const globalPersonaEnabled = c?.globalPersonaEnabled === true;
+    const globalPersonaMode = String(c?.globalPersonaMode || "single");
     const globalPersonaOwnerId = String(c?.globalPersonaUserId || "");
     const globalPersonaOwnerDisplay = String(c?.globalPersonaOwnerDisplay || globalPersonaOwnerId || "").trim();
     const globalPersonaReplyCount = Number(c?.globalPersonaReplyCount || 0);
     const globalPersonaReplyLimit = Number(c?.globalPersonaReplyLimit || 0);
+    const globalPersonaQueueCount = Number(c?.globalPersonaQueueCount || 0);
+    const globalPersonaNextOwnerDisplay = String(c?.globalPersonaNextOwnerDisplay || "").trim();
     const replyStyleLabel =
       replyStyleEffective === "reply_only"
         ? I.labelReplyOnly
@@ -85,8 +96,19 @@ function renderChats() {
     tags.className = "chat-tags";
     tags.appendChild(makePill(replyStyleLabel + (replyStyle ? "" : " · " + I.labelReplyStyleDefault)));
     tags.appendChild(makePill(c && c.autoReply ? I.autoReplyOn : I.autoReplyOff));
-    tags.appendChild(makePill((globalPersonaEnabled ? I.globalPersonaOn : I.globalPersonaOff) + (globalPersonaOwnerDisplay ? " · " + globalPersonaOwnerDisplay : "")));
-    if (globalPersonaEnabled) tags.appendChild(makePill(I.globalPersonaQuota + ": " + globalPersonaReplyCount + "/" + formatReplyLimit(globalPersonaReplyLimit)));
+    tags.appendChild(
+      makePill(
+        formatGlobalPersonaMode(globalPersonaMode, globalPersonaEnabled) +
+          (globalPersonaEnabled && globalPersonaMode === "single" && globalPersonaOwnerDisplay ? " · " + globalPersonaOwnerDisplay : "")
+      )
+    );
+    if (globalPersonaEnabled && globalPersonaMode === "single") {
+      tags.appendChild(makePill(I.globalPersonaQuota + ": " + globalPersonaReplyCount + "/" + formatReplyLimit(globalPersonaReplyLimit)));
+    }
+    if (globalPersonaEnabled && globalPersonaMode !== "single") {
+      tags.appendChild(makePill(I.globalPersonaQueue + ": " + globalPersonaQueueCount));
+      if (globalPersonaNextOwnerDisplay) tags.appendChild(makePill(I.globalPersonaNext + ": " + globalPersonaNextOwnerDisplay));
+    }
     tags.appendChild(makePill(I.labelProviderCurrent + ": " + providerName + (providerInherited ? " · " + I.labelReplyStyleDefault : "")));
     tags.appendChild(makePill(I.labelLastActive + ": " + lastSeenText));
     left.appendChild(tags);
@@ -191,9 +213,18 @@ function renderChats() {
     personaWrap.className = "row";
     const personaSel = document.createElement("select");
     personaSel.className = "input";
-    personaSel.style.minWidth = "140px";
-    personaSel.innerHTML = '<option value="off">' + I.globalPersonaOff + '</option><option value="on">' + I.globalPersonaOn + "</option>";
-    personaSel.value = globalPersonaEnabled ? "on" : "off";
+    personaSel.style.minWidth = "180px";
+    personaSel.innerHTML =
+      '<option value="off">' +
+      I.globalPersonaOff +
+      '</option><option value="single">' +
+      I.globalPersonaModeSingle +
+      '</option><option value="sequential">' +
+      I.globalPersonaModeSequential +
+      '</option><option value="random">' +
+      I.globalPersonaModeRandom +
+      "</option>";
+    personaSel.value = globalPersonaEnabled ? globalPersonaMode : "off";
 
     const ownerInput = document.createElement("input");
     ownerInput.className = "input";
@@ -209,12 +240,22 @@ function renderChats() {
     limitInput.style.width = "110px";
     limitInput.value = String(Number.isFinite(globalPersonaReplyLimit) ? globalPersonaReplyLimit : 100);
 
+    const syncPersonaControls = () => {
+      const singleMode = personaSel.value === "single";
+      ownerInput.disabled = !singleMode;
+      limitInput.disabled = !singleMode;
+    };
+    syncPersonaControls();
+    personaSel.addEventListener("change", syncPersonaControls);
+
     const btnPersona = document.createElement("button");
     btnPersona.className = "btn";
     btnPersona.type = "button";
     btnPersona.textContent = I.actionApply;
     btnPersona.addEventListener("click", async () => {
-      const nextEnabled = personaSel.value === "on";
+      const selectedMode = String(personaSel.value || "off");
+      const nextEnabled = selectedMode !== "off";
+      const nextMode = nextEnabled ? selectedMode : globalPersonaMode || "single";
       const nextOwner = String(ownerInput.value || "").trim();
       const nextLimit = Math.max(0, Math.trunc(Number(limitInput.value || 0) || 0));
       const res = await fetch("/api/chat-settings", {
@@ -224,6 +265,7 @@ function renderChats() {
           chatId,
           patch: {
             globalPersonaEnabled: nextEnabled,
+            globalPersonaMode: nextMode,
             globalPersonaUserId: nextOwner,
             globalPersonaReplyLimit: nextLimit
           }
@@ -234,11 +276,7 @@ function renderChats() {
         toast(json.error || I.errSave, false);
         return;
       }
-      c.globalPersonaEnabled = nextEnabled;
-      c.globalPersonaUserId = nextOwner;
-      c.globalPersonaReplyLimit = nextLimit;
-      c.globalPersonaReplyCount = Number(json?.settings?.globalPersonaReplyCount || 0);
-      c.globalPersonaOwnerDisplay = String(json?.settings?.globalPersonaOwnerDisplay || nextOwner);
+      Object.assign(c, json?.settings || {});
       renderChats();
       toast(I.saved, true);
     });
@@ -258,7 +296,7 @@ function renderChats() {
         toast(json.error || I.errSave, false);
         return;
       }
-      c.globalPersonaReplyCount = 0;
+      Object.assign(c, json?.settings || {});
       renderChats();
       toast(I.saved, true);
     });

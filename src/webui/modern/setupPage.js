@@ -11,42 +11,53 @@ export function renderSetupPage({ appName, configPath, ui, nonce }) {
     ui,
     nonce,
     content: `
-      <div class="card" style="max-width:820px;margin:18px auto 0">
-        <h2 style="margin:0 0 6px">${escapeHtml(t(lang, "setup.first_time"))}</h2>
-        <div class="sub">${escapeHtml(t(lang, "setup.desc"))}</div>
-        <form id="f" autocomplete="off">
-          <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px;margin-top:10px">
-            <div>
-              <label>${escapeHtml(t(lang, "setup.display_name"))}</label>
-              <input class="input" name="displayName" placeholder="${escapeHtml(t(lang, "placeholder.display_name"))}" />
-              <label>${escapeHtml(t(lang, "setup.admin_username"))}</label>
-              <input class="input" name="username" value="admin" required />
-              <label>${escapeHtml(t(lang, "setup.admin_password"))}</label>
-              <input class="input" name="password" type="password" placeholder="${escapeHtml(t(lang, "placeholder.min_8_chars"))}" required />
-              <label>${escapeHtml(t(lang, "setup.confirm_password"))}</label>
-              <input class="input" name="password2" type="password" required />
-            </div>
-            <div>
-              <div class="pill" style="margin-top:6px">${escapeHtml(t(lang, "setup.optional"))}</div>
-              <label>${escapeHtml(t(lang, "setup.telegram_token"))}</label>
-              <input class="input" name="telegramToken" placeholder="123456:ABC..." />
-              <label>${escapeHtml(t(lang, "setup.provider_base_url"))}</label>
-              <input class="input" name="providerBaseUrl" placeholder="https://api.openai.com" />
-              <label>${escapeHtml(t(lang, "setup.provider_api_key"))}</label>
-              <input class="input" name="providerApiKey" placeholder="sk-..." />
-              <label>${escapeHtml(t(lang, "setup.model"))}</label>
-              <input class="input" name="providerModel" placeholder="gpt-4.1-mini" />
-              <label>${escapeHtml(t(lang, "setup.api_type"))}</label>
-              <select class="input" name="providerApiType">
-                <option value="responses">/v1/responses</option>
-                <option value="chat_completions">/v1/chat/completions</option>
-              </select>
-            </div>
+      <div class="auth-shell">
+        <div class="card auth-side">
+          <div class="hero-kicker">${escapeHtml(t(lang, "page.setup"))}</div>
+          <h2 class="auth-title">${escapeHtml(t(lang, "setup.first_time"))}</h2>
+          <div class="sub auth-note">${escapeHtml(t(lang, "setup.desc"))}</div>
+          <div class="auth-pills">
+            <span class="pill">${escapeHtml(t(lang, "setup.optional"))}</span>
+            <span class="pill">Telegram</span>
+            <span class="pill">OpenAI</span>
           </div>
-          <div class="row" style="margin-top:14px;justify-content:flex-end">
-            <button class="btn primary" type="submit">${escapeHtml(t(lang, "setup.create_config"))}</button>
-          </div>
-        </form>
+          <div class="sub auth-note">${escapeHtml(t(lang, "setup.side_note"))}</div>
+        </div>
+        <div class="card auth-form">
+          <form id="f" autocomplete="off">
+            <div class="grid two-col" style="margin-top:4px">
+              <div>
+                <label>${escapeHtml(t(lang, "setup.display_name"))}</label>
+                <input class="input" name="displayName" placeholder="${escapeHtml(t(lang, "placeholder.display_name"))}" />
+                <label>${escapeHtml(t(lang, "setup.admin_username"))}</label>
+                <input class="input" name="username" value="admin" required />
+                <label>${escapeHtml(t(lang, "setup.admin_password"))}</label>
+                <input class="input" name="password" type="password" placeholder="${escapeHtml(t(lang, "placeholder.min_8_chars"))}" required />
+                <label>${escapeHtml(t(lang, "setup.confirm_password"))}</label>
+                <input class="input" name="password2" type="password" required />
+              </div>
+              <div>
+                <div class="pill" style="margin-top:6px">${escapeHtml(t(lang, "setup.optional"))}</div>
+                <label>${escapeHtml(t(lang, "setup.telegram_token"))}</label>
+                <input class="input" name="telegramToken" placeholder="123456:ABC..." />
+                <label>${escapeHtml(t(lang, "setup.provider_base_url"))}</label>
+                <input class="input" name="providerBaseUrl" placeholder="https://api.openai.com" />
+                <label>${escapeHtml(t(lang, "setup.provider_api_key"))}</label>
+                <input class="input" name="providerApiKey" placeholder="sk-..." />
+                <label>${escapeHtml(t(lang, "setup.model"))}</label>
+                <input class="input" name="providerModel" placeholder="gpt-4.1-mini" />
+                <label>${escapeHtml(t(lang, "setup.api_type"))}</label>
+                <select class="input" name="providerApiType">
+                  <option value="responses">/v1/responses</option>
+                  <option value="chat_completions">/v1/chat/completions</option>
+                </select>
+              </div>
+            </div>
+            <div class="row" style="justify-content:flex-end">
+              <button class="btn primary" type="submit">${escapeHtml(t(lang, "setup.create_config"))}</button>
+            </div>
+          </form>
+        </div>
       </div>
       <script nonce="${escapeHtml(String(nonce || ""))}">
         const toast=(t,ok=true)=>{const el=document.getElementById('toast');const d=document.createElement('div');d.className='msg '+(ok?'ok':'err');d.textContent=t;el.appendChild(d);setTimeout(()=>d.remove(),3800)};

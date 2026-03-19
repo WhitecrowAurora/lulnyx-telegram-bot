@@ -4,6 +4,7 @@ import { ensureDirSync, normalizeBaseUrl } from "./util.js";
 import { resolveAppRootDir } from "./appPaths.js";
 import { normalizeOutboundSecurity } from "./security/outbound.js";
 import { normalizeChatReplyStyle } from "./state/common.js";
+import { normalizeMiniAppConfig } from "./web/miniApp.js";
 
 const CONFIG_FILENAME = "config.json";
 const EXAMPLE_FILENAME = "config.example.json";
@@ -129,6 +130,7 @@ function normalizeConfig(cfg) {
   config.web.username = String(config.web.username || "admin");
   config.web.password = String(config.web.password || "change_me");
   config.web.cookieSecure = config.web.cookieSecure === true;
+  config.web.miniApp = normalizeMiniAppConfig(config.web.miniApp, config.telegram?.delivery?.publicBaseUrl);
 
   config.stateStorage ??= {};
   config.stateStorage.type = config.stateStorage.type === "sqlite" ? "sqlite" : "json";

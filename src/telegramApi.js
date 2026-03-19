@@ -34,6 +34,7 @@ export function createTelegramApi({ token, logger }) {
     sendChatAction: (params) => call("sendChatAction", params),
     editMessageText: (params) => call("editMessageText", params),
     answerCallbackQuery: (params) => call("answerCallbackQuery", params),
-    setMyCommands: (params) => call("setMyCommands", params).catch((e) => logger.warn("setMyCommands failed", e))
+    setMyCommands: (params) => call("setMyCommands", params).catch((e) => logger.warn("setMyCommands failed", e)),
+    setChatMenuButton: (params) => call("setChatMenuButton", params).catch((e) => logger.warn("setChatMenuButton failed", e))
   };
 }

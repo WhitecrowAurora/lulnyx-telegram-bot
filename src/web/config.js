@@ -143,7 +143,12 @@ export function buildConfigSummary(cfg) {
     },
     web: {
       username: String(c.web?.username || ""),
-      cookieSecure: c.web?.cookieSecure === true
+      cookieSecure: c.web?.cookieSecure === true,
+      miniApp: {
+        enabled: c.web?.miniApp?.enabled === true,
+        publicUrl: String(c.web?.miniApp?.publicBaseUrl || ""),
+        usersCount: Array.isArray(c.web?.miniApp?.users) ? c.web.miniApp.users.length : 0
+      }
     },
     telegram: {
       allowAll: c.telegram?.allowAll === true,

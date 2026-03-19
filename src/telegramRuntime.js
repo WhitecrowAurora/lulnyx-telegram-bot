@@ -2,7 +2,8 @@ import { sleep } from "./util.js";
 import { createTelegramApi } from "./telegramApi.js";
 import { handleIncomingText, handleCallbackQuery } from "./chat.js";
 import { bt, getTelegramCommands } from "./botI18n.js";
-import { clampText, getEffectiveChatReplyStyle, normalizeChatReplyStyle } from "./state/common.js";
+import { getEffectiveChatReplyStyle, normalizeChatReplyStyle } from "./state/common.js";
+import { getMiniAppPublicUrl } from "./web/miniApp.js";
 
 const TELEGRAM_MAX_MESSAGE = 4096;
 const KNOWN_COMMANDS = new Set([...getTelegramCommands("en").map((c) => c.command), "start"]);
@@ -36,6 +37,19 @@ export async function createTelegramRuntime({ logger, configStore, stateStore })
   for (const scope of scopes) {
     await api.setMyCommands({ scope, commands: commandsZh });
     await api.setMyCommands({ scope, language_code: "en", commands: commandsEn });
+  }
+
+  const miniAppUrl = getMiniAppPublicUrl(cfg);
+  if (cfg.web?.miniApp?.enabled === true && miniAppUrl) {
+    await api.setChatMenuButton({
+      menu_button: {
+        type: "web_app",
+        text: String(cfg.web?.miniApp?.buttonText || "Panel"),
+        web_app: { url: miniAppUrl }
+      }
+    });
+  } else {
+    await api.setChatMenuButton({ menu_button: { type: "default" } });
   }
 
   const queues = new Map(); // chatId -> Promise chain
@@ -229,7 +243,6 @@ async function handleMessage({ logger, api, configStore, stateStore, message, id
     const isGroup = chatType === "group" || chatType === "supergroup";
     const autoReply = Boolean(chatSettings?.autoReply) || Boolean(cfg.telegram?.autoReplyByDefault);
     if (!isGroup || !autoReply) return;
-    if (chatSettings?.globalPersonaEnabled === true && !canUseGroupGlobalPersona({ chatSettings, chatType, stateStore })) return;
     if (hasMedia(message)) return;
     if (hasUrlEntity(message)) return;
   }
@@ -323,19 +336,6 @@ async function handleMessage({ logger, api, configStore, stateStore, message, id
     });
     first = false;
   }
-}
-
-function canUseGroupGlobalPersona({ chatSettings, chatType, stateStore }) {
-  const type = String(chatType || chatSettings?.chatType || "").trim();
-  if (type !== "group" && type !== "supergroup") return false;
-  if (chatSettings?.globalPersonaEnabled !== true) return false;
-  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
-  if (!ownerUserId) return false;
-  const limit = Math.max(0, Math.trunc(Number(chatSettings?.globalPersonaReplyLimit || 0) || 0));
-  const count = Math.max(0, Math.trunc(Number(chatSettings?.globalPersonaReplyCount || 0) || 0));
-  if (limit > 0 && count >= limit) return false;
-  const ownerProfile = stateStore.getUserProfile?.(ownerUserId) || null;
-  return Boolean(clampText(ownerProfile?.customPersona, 12000));
 }
 
 async function handleCb({ logger, api, configStore, stateStore, callbackQuery, lastNotAllowedNoticeAt }) {

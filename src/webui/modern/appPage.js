@@ -3,6 +3,54 @@ import { escapeHtml, jsString } from "./util.js";
 import { t } from "./i18n.js";
 import { renderAppClientInline } from "./appClientInline.js";
 
+function renderIcon(name) {
+  const icons = {
+    overview: '<path d="M3 11.5L12 4l9 7.5"/><path d="M5 10v9h5v-5h4v5h5v-9"/>',
+    basics: '<rect x="4" y="5" width="16" height="14" rx="3"/><path d="M8 9h8"/><path d="M8 13h5"/>',
+    model: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/><circle cx="17" cy="17" r="2.2"/>',
+    prompts: '<path d="M6 4h9l3 3v13H6z"/><path d="M15 4v4h4"/><path d="M9 12h6"/><path d="M9 16h6"/>',
+    rules: '<path d="M7 4h10a2 2 0 0 1 2 2v12l-3-2-3 2-3-2-3 2V6a2 2 0 0 1 2-2z"/>',
+    search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>',
+    longterm: '<path d="M12 5v7l4 2"/><circle cx="12" cy="12" r="8"/>',
+    quotas: '<path d="M5 19V9"/><path d="M12 19V5"/><path d="M19 19v-8"/>',
+    chats: '<path d="M5 6h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>',
+    users: '<path d="M16 19a4 4 0 0 0-8 0"/><circle cx="12" cy="9" r="3"/><path d="M5 19a3.5 3.5 0 0 1 3-3.46"/><path d="M19 19a3.5 3.5 0 0 0-3-3.46"/>',
+    plugins: '<path d="M9 3v5"/><path d="M15 3v5"/><path d="M8 8h8a3 3 0 0 1 3 3v3a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6v-3a3 3 0 0 1 3-3z"/>',
+    memory: '<path d="M7 5h10"/><path d="M7 9h10"/><path d="M7 13h7"/><rect x="4" y="3" width="16" height="18" rx="3"/>',
+    analytics: '<path d="M4 18l5-6 4 3 7-9"/><path d="M4 20h16"/>',
+    daily: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4"/><path d="M16 3v4"/><path d="M4 10h16"/>',
+    advanced: '<path d="M9.5 4.5l-1 3.5"/><path d="M15.5 4.5l1 3.5"/><path d="M6 13l-2 2 2 2"/><path d="M18 13l2 2-2 2"/><path d="M13 10l-2 10"/>',
+    chevron: '<path d="M9 6l6 6-6 6"/>'
+  };
+  const body = icons[name] || icons.overview;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+function navButton({ view, label, icon, current = false }) {
+  return `
+    <button class="nav-item" data-view="${escapeHtml(view)}"${current ? ' aria-current="page"' : ""} type="button">
+      <span class="nav-item-main">
+        <span class="nav-icon">${renderIcon(icon)}</span>
+        <span>${label}</span>
+      </span>
+      <span class="nav-arrow">${renderIcon("chevron")}</span>
+    </button>
+  `;
+}
+
+function shortcutButton({ view, title, note, icon }) {
+  return `
+    <button class="shortcut-card" data-view="${escapeHtml(view)}" type="button">
+      <div class="shortcut-top">
+        <span class="shortcut-icon">${renderIcon(icon)}</span>
+        <span class="nav-arrow">${renderIcon("chevron")}</span>
+      </div>
+      <div class="shortcut-title">${title}</div>
+      <div class="shortcut-note">${note}</div>
+    </button>
+  `;
+}
+
 export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce }) {
   const lang = ui?.lang === "zh" ? "zh" : "en";
   const tt = (key, vars) => escapeHtml(t(lang, key, vars));
@@ -20,77 +68,119 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
     content: `
       <div class="layout">
         <div class="sidebar">
-          <div class="card">
-            <div style="font-weight:800;margin-bottom:8px">${tt("nav.menu")}</div>
+          <div class="card sidebar-card">
+            <div class="sidebar-head">
+              <div class="sidebar-kicker">${tt("page.dashboard")}</div>
+              <div class="sidebar-title">${tt("dashboard.title")}</div>
+              <div class="sidebar-note">${tt("dashboard.hero_note")}</div>
+            </div>
             <div class="nav">
-              <button class="nav-item" data-view="overview" aria-current="page">${tt("nav.overview")}</button>
+              ${navButton({ view: "overview", label: tt("nav.overview"), icon: "overview", current: true })}
 
               <details open>
                 <summary>${tt("nav.settings")}</summary>
                 <div class="nav-items">
-                  <button class="nav-item" data-view="settings-basics">${tt("nav.basics")}</button>
-                  <button class="nav-item" data-view="settings-model">${tt("nav.model_providers")}</button>
-                  <button class="nav-item" data-view="settings-prompts">${tt("nav.prompts_personas")}</button>
-                  <button class="nav-item" data-view="settings-rules">${tt("nav.rules_storage")}</button>
-                  <button class="nav-item" data-view="settings-search">${tt("nav.search")}</button>
-                  <button class="nav-item" data-view="settings-longterm">${tt("nav.longterm")}</button>
-                  <button class="nav-item" data-view="settings-quotas">${tt("nav.quotas")}</button>
+                  ${navButton({ view: "settings-basics", label: tt("nav.basics"), icon: "basics" })}
+                  ${navButton({ view: "settings-model", label: tt("nav.model_providers"), icon: "model" })}
+                  ${navButton({ view: "settings-prompts", label: tt("nav.prompts_personas"), icon: "prompts" })}
+                  ${navButton({ view: "settings-rules", label: tt("nav.rules_storage"), icon: "rules" })}
+                  ${navButton({ view: "settings-search", label: tt("nav.search"), icon: "search" })}
+                  ${navButton({ view: "settings-longterm", label: tt("nav.longterm"), icon: "longterm" })}
+                  ${navButton({ view: "settings-quotas", label: tt("nav.quotas"), icon: "quotas" })}
                 </div>
               </details>
 
               <details open>
                 <summary>${tt("nav.tools")}</summary>
                 <div class="nav-items">
-                  <button class="nav-item" data-view="tools-chats">${tt("nav.known_chats")}</button>
-                  <button class="nav-item" data-view="tools-users">${tt("nav.user_profiles")}</button>
-                  <button class="nav-item" data-view="tools-plugins">${tt("nav.plugins")}</button>
-                  <button class="nav-item" data-view="tools-memory">${tt("nav.memory_admin")}</button>
-                  <button class="nav-item" data-view="tools-search">${tt("nav.search_test")}</button>
-                  <button class="nav-item" data-view="tools-analytics">${tt("nav.analytics")}</button>
-                  <button class="nav-item" data-view="tools-daily">${tt("nav.daily_memory")}</button>
+                  ${navButton({ view: "tools-chats", label: tt("nav.known_chats"), icon: "chats" })}
+                  ${navButton({ view: "tools-users", label: tt("nav.user_profiles"), icon: "users" })}
+                  ${navButton({ view: "tools-plugins", label: tt("nav.plugins"), icon: "plugins" })}
+                  ${navButton({ view: "tools-memory", label: tt("nav.memory_admin"), icon: "memory" })}
+                  ${navButton({ view: "tools-search", label: tt("nav.search_test"), icon: "search" })}
+                  ${navButton({ view: "tools-analytics", label: tt("nav.analytics"), icon: "analytics" })}
+                  ${navButton({ view: "tools-daily", label: tt("nav.daily_memory"), icon: "daily" })}
                 </div>
               </details>
 
               <details>
                 <summary>${tt("nav.advanced")}</summary>
                 <div class="nav-items">
-                  <button class="nav-item" data-view="advanced-raw">${tt("nav.raw_json")}</button>
+                  ${navButton({ view: "advanced-raw", label: tt("nav.raw_json"), icon: "advanced" })}
                 </div>
               </details>
             </div>
           </div>
         </div>
 
-        <div class="card">
-          <div class="row" style="justify-content:space-between;align-items:center">
-            <div>
-              <div style="font-weight:700">${tt("dashboard.title")}</div>
-              <div class="sub">${tt("dashboard.subtitle")}</div>
-            </div>
-            <div class="row">
-              <button class="btn" id="btnReload">${tt("action.reload")}</button>
-              <button class="btn primary" id="btnSave">${tt("action.save")}</button>
-              <button class="btn ghost" id="btnLogout">${tt("action.logout")}</button>
+        <div class="main-panel">
+          <div class="card hero-card">
+            <div class="hero-top">
+              <div class="hero-copy">
+                <div class="hero-kicker">${tt("dashboard.title")}</div>
+                <h1 class="hero-title">${tt("dashboard.title")}</h1>
+                <div class="sub hero-note">${tt("dashboard.hero_note")}</div>
+                <div class="hero-meta">
+                  <span class="pill">${escapeHtml(subtitle)}</span>
+                  <span class="pill">${tt("overview.save_note")}</span>
+                </div>
+              </div>
+              <div class="hero-actions">
+                <button class="btn" id="btnReload" type="button">${tt("action.reload")}</button>
+                <button class="btn primary" id="btnSave" type="button">${tt("action.save")}</button>
+                <button class="btn ghost" id="btnLogout" type="button">${tt("action.logout")}</button>
+              </div>
             </div>
           </div>
 
           <div class="view active" id="view-overview">
-            <div class="msg">${tt("overview.select_section")}</div>
-            <div class="sub" style="margin-top:10px">${tt("overview.save_note")}</div>
-            <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+            <div class="page-head">
               <div>
-                <div class="row" style="justify-content:space-between;align-items:center">
-                  <div style="font-weight:700">${tt("overview.summary_title")}</div>
+                <h2 class="page-title">${tt("nav.overview")}</h2>
+                <div class="sub page-note">${tt("dashboard.subtitle")}</div>
+              </div>
+            </div>
+            <div class="grid two-col">
+              <div class="section-card">
+                <div class="section-head">
+                  <div>
+                    <h3 class="section-title">${tt("overview.summary_title")}</h3>
+                    <div class="section-desc">${tt("overview.summary_note")}</div>
+                  </div>
                   <button class="btn" id="btnSummary" type="button">${tt("overview.summary_refresh")}</button>
                 </div>
                 <textarea id="summaryOut" style="min-height:240px" readonly></textarea>
               </div>
-              <div>
-                <div style="font-weight:700;margin:4px 0 6px">${tt("overview.diagnostics")}</div>
-                <div class="sub">${tt("storage.secret_hint")}</div>
-                <div class="row" style="margin-top:10px">
-                  <a class="btn" id="btnDiagnostics" href="/api/diagnostics" target="_blank" rel="noreferrer">${tt("overview.diagnostics_open")}</a>
+              <div class="section-card">
+                <div class="section-head">
+                  <div>
+                    <h3 class="section-title">${tt("overview.diagnostics")}</h3>
+                    <div class="section-desc">${tt("overview.diagnostics_note")}</div>
+                  </div>
                 </div>
+                <div class="empty-state">
+                  <div class="sub">${tt("storage.secret_hint")}</div>
+                  <div class="sub" style="margin-top:10px">${tt("overview.restart_note")}</div>
+                  <div class="row" style="margin-top:14px">
+                    <a class="btn" id="btnDiagnostics" href="/api/diagnostics" target="_blank" rel="noreferrer">${tt("overview.diagnostics_open")}</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="section-card" style="margin-top:16px">
+              <div class="section-head">
+                <div>
+                  <h3 class="section-title">${tt("overview.quick_links")}</h3>
+                  <div class="section-desc">${tt("overview.quick_links_note")}</div>
+                </div>
+              </div>
+              <div class="shortcut-grid">
+                ${shortcutButton({ view: "settings-basics", title: tt("nav.basics"), note: tt("basics.telegram"), icon: "basics" })}
+                ${shortcutButton({ view: "settings-model", title: tt("nav.model_providers"), note: tt("model.params"), icon: "model" })}
+                ${shortcutButton({ view: "settings-prompts", title: tt("nav.prompts_personas"), note: tt("personas.title"), icon: "prompts" })}
+                ${shortcutButton({ view: "tools-chats", title: tt("nav.known_chats"), note: tt("tools.chats_allow_hint"), icon: "chats" })}
+                ${shortcutButton({ view: "tools-users", title: tt("nav.user_profiles"), note: tt("users.note"), icon: "users" })}
+                ${shortcutButton({ view: "tools-analytics", title: tt("nav.analytics"), note: tt("analytics.note"), icon: "analytics" })}
               </div>
             </div>
           </div>
@@ -348,38 +438,6 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                 </div>
               </div>
             </div>
-          </div>
-
-          <div class="view" id="view-advanced-raw">
-            <label>${tt("advanced.config_json_label")}</label>
-            <textarea id="cfg" style="min-height:520px"></textarea>
-          </div>
-
-          <div class="view" id="view-tools-memory">
-            <div class="grid" style="grid-template-columns:.9fr 1.1fr;gap:16px">
-              <div>
-                <div class="row" style="justify-content:space-between;align-items:center">
-                  <div style="font-weight:700">${tt("tools.conversations")}</div>
-                  <button class="btn" id="btnConvRefresh">${tt("action.refresh")}</button>
-                </div>
-                <label>${tt("field.filter")}</label>
-                <input class="input" id="convFilter" placeholder="${tt("placeholder.conv_filter")}" />
-                <div class="list" id="convList" style="margin-top:10px"></div>
-              </div>
-              <div>
-                <div class="row" style="justify-content:space-between;align-items:center">
-                  <div style="font-weight:700">${tt("tools.conversation")}</div>
-                  <div class="row">
-                    <button class="btn danger" id="btnConvDelete" disabled>${tt("action.delete")}</button>
-                    <button class="btn primary" id="btnConvSave" disabled>${tt("action.save")}</button>
-                  </div>
-                </div>
-                <label>${tt("field.key")}</label>
-                <input class="input" id="convKey" readonly />
-                <label>${tt("field.json")}</label>
-                <textarea id="convJson" style="min-height:260px"></textarea>
-              </div>
-            </div>
 
             <div class="view" id="view-settings-longterm">
               <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
@@ -462,6 +520,38 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                   <label>${tt("quotas.per_chat_replies")}</label>
                   <input class="input" id="fQuotaChatReplies" type="number" min="0" step="1" />
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="view" id="view-advanced-raw">
+            <label>${tt("advanced.config_json_label")}</label>
+            <textarea id="cfg" style="min-height:520px"></textarea>
+          </div>
+
+          <div class="view" id="view-tools-memory">
+            <div class="grid" style="grid-template-columns:.9fr 1.1fr;gap:16px">
+              <div>
+                <div class="row" style="justify-content:space-between;align-items:center">
+                  <div style="font-weight:700">${tt("tools.conversations")}</div>
+                  <button class="btn" id="btnConvRefresh">${tt("action.refresh")}</button>
+                </div>
+                <label>${tt("field.filter")}</label>
+                <input class="input" id="convFilter" placeholder="${tt("placeholder.conv_filter")}" />
+                <div class="list" id="convList" style="margin-top:10px"></div>
+              </div>
+              <div>
+                <div class="row" style="justify-content:space-between;align-items:center">
+                  <div style="font-weight:700">${tt("tools.conversation")}</div>
+                  <div class="row">
+                    <button class="btn danger" id="btnConvDelete" disabled>${tt("action.delete")}</button>
+                    <button class="btn primary" id="btnConvSave" disabled>${tt("action.save")}</button>
+                  </div>
+                </div>
+                <label>${tt("field.key")}</label>
+                <input class="input" id="convKey" readonly />
+                <label>${tt("field.json")}</label>
+                <textarea id="convJson" style="min-height:260px"></textarea>
               </div>
             </div>
           </div>

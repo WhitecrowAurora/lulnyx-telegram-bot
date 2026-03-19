@@ -1,2 +1,1 @@
-export { renderLoginPage, renderSetupPage, renderAppPage } from "./webui/modern/index.js";
-
+export { renderLoginPage, renderSetupPage, renderAppPage, renderMiniAppPage } from "./webui/modern/index.js";

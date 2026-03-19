@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import { searxngSearch } from "./search.js";
 import { createSessionManager, hashPassword, makeSetCookie } from "./webAuth.js";
-import { renderAppPage, renderLoginPage, renderSetupPage } from "./webUiModern.js";
+import { renderAppPage, renderLoginPage, renderMiniAppPage, renderSetupPage } from "./webUiModern.js";
 import { getUiPrefs } from "./web/uiPrefs.js";
 import { getAuth, verifyWebLogin } from "./web/auth.js";
 import { buildConfigSummary, buildDiagnostics, buildSetupConfig, isMaskedOrBlank, maskConfig, mergeSecrets, normalizePostedConfig, secretMask } from "./web/config.js";
@@ -10,12 +10,27 @@ import {
   clampText,
   getActiveUserPersona,
   getEffectiveChatReplyStyle,
+  normalizeGlobalPersonaMode,
   normalizeUserProfileState,
   normalizeBool,
   normalizeOptionalChatReplyStyle,
   normalizeUserDisplayNameMode,
   normalizeUserPromptSlot
 } from "./state/common.js";
+import {
+  getGroupPersonaQueueEntries,
+  getUserProfileDisplayName,
+  resetGroupPersonaUsageState,
+  resolveGroupPersonaSelection
+} from "./groupPersona.js";
+import {
+  getMiniAppAuth,
+  getMiniAppPublicUrl,
+  miniAppCookieName,
+  resolveMiniAppUser,
+  roleToLevel,
+  verifyMiniAppInitData
+} from "./web/miniApp.js";
 import { readJson, redirect, sendHtml, sendJson, sendText } from "./web/http.js";
 import { clientIp, isHttpsRequest, isLocalRequest } from "./web/net.js";
 import { createRateLimiter } from "./web/rateLimiter.js";
@@ -71,13 +86,78 @@ function getEffectiveChatProvider(cfg, chatSettings) {
   };
 }
 
+function buildGroupPersonaWebState({ stateStore, chatId, chatSettings }) {
+  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
+  const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
+  const queueEntries = getGroupPersonaQueueEntries({ chatSettings, stateStore }).map((entry) => ({
+    userId: entry.userId,
+    displayName: entry.displayName,
+    replyLimit: entry.replyLimit,
+    replyCount: entry.replyCount,
+    remaining: entry.remaining,
+    personaReady: entry.personaReady,
+    exhausted: entry.exhausted,
+    joinedAt: entry.joinedAt
+  }));
+  const selection = resolveGroupPersonaSelection({
+    stateStore,
+    chatId,
+    userId: "",
+    chatType: chatSettings?.chatType,
+    chatSettings
+  });
+  return {
+    globalPersonaMode: normalizeGlobalPersonaMode(chatSettings?.globalPersonaMode),
+    globalPersonaOwnerDisplay: getUserProfileDisplayName(ownerProfile, ownerUserId),
+    globalPersonaQueueCount: queueEntries.length,
+    globalPersonaQueueItems: queueEntries,
+    globalPersonaNextOwnerDisplay: selection.enabled ? String(selection.selectedDisplayName || "") : "",
+    globalPersonaStatusReason: String(selection.reason || ""),
+    globalPersonaReplyCount: Number(chatSettings?.globalPersonaReplyCount || 0)
+  };
+}
+
+function buildMiniAppBootstrap({ cfg, stateStore, telegram, viewer }) {
+  const summary = buildConfigSummary(cfg);
+  const allowedChats = new Set((Array.isArray(cfg.telegram?.allowedChatIds) ? cfg.telegram.allowedChatIds : []).map((item) => String(item)));
+  const allChats = stateStore.listKnownChats();
+  const chats = allChats.slice(0, 48).map((item) => {
+    const provider = getEffectiveChatProvider(cfg, item);
+    return {
+      ...item,
+      ...buildGroupPersonaWebState({ stateStore, chatId: item.chatId, chatSettings: item }),
+      providerEffective: provider.providerId,
+      providerNameEffective: provider.providerName,
+      allowed: allowedChats.has(String(item.chatId))
+    };
+  });
+  return {
+    appName: String(cfg.app?.displayName || "Bot"),
+    viewer,
+    summary: {
+      knownChatsCount: allChats.length,
+      providersCount: Number(summary?.providers?.count || 0),
+      defaultProviderId: String(summary?.providers?.defaultProviderId || ""),
+      telegramMode: String(summary?.telegram?.delivery?.mode || cfg.telegram?.delivery?.mode || "polling"),
+      allowAll: cfg.telegram?.allowAll === true
+    },
+    telegramStatus: telegram?.getStatus ? telegram.getStatus() : null,
+    chats,
+    miniApp: {
+      publicUrl: getMiniAppPublicUrl(cfg),
+      enabled: cfg.web?.miniApp?.enabled === true
+    }
+  };
+}
+
 export function createWebServer({ logger, configStore, stateStore, telegram }) {
   const sessions = createSessionManager();
+  const miniSessions = createSessionManager({ cookieName: miniAppCookieName() });
   const loginLimiter = createRateLimiter({ windowMs: 10 * 60 * 1000, max: 30 });
 
   const server = http.createServer(async (req, res) => {
     try {
-      await handle({ req, res, logger, configStore, stateStore, telegram, sessions, loginLimiter });
+      await handle({ req, res, logger, configStore, stateStore, telegram, sessions, miniSessions, loginLimiter });
     } catch (err) {
       logger?.error?.("web request failed", err);
       sendJson(res, 500, { error: "internal_error" });
@@ -87,13 +167,13 @@ export function createWebServer({ logger, configStore, stateStore, telegram }) {
   return server;
 }
 
-async function handle({ req, res, logger, configStore, stateStore, telegram, sessions, loginLimiter }) {
-  const cspNonce = makeCspNonce();
-  setSecurityHeaders(res, cspNonce);
-
-  const method = String(req.method || "GET").toUpperCase();
+async function handle({ req, res, logger, configStore, stateStore, telegram, sessions, miniSessions, loginLimiter }) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const pathname = url.pathname;
+  const cspNonce = makeCspNonce();
+  setSecurityHeaders(res, cspNonce, { allowTelegramWebApp: pathname === "/tgapp" });
+
+  const method = String(req.method || "GET").toUpperCase();
 
   if (method === "GET" && (pathname === "/health" || pathname === "/healthz")) return sendText(res, 200, "ok\n");
 
@@ -209,6 +289,146 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
       }
     }
     return sendJson(res, 403, { error: "setup_required" });
+  }
+
+  const miniAuth = getMiniAppAuth({ req, cfg, miniSessions });
+  const miniRequireRole = (minLevel) => {
+    if (!miniAuth.ok) {
+      sendJson(res, 401, { error: "miniapp_unauthorized" });
+      return false;
+    }
+    const min = Number(minLevel ?? 0);
+    if (Number(miniAuth.roleLevel || 0) >= min) return true;
+    sendJson(res, 403, { error: "forbidden" });
+    return false;
+  };
+
+  if (method === "GET" && pathname === "/tgapp") {
+    if (cfg.web?.miniApp?.enabled !== true) return sendJson(res, 404, { error: "miniapp_disabled" });
+    return sendHtml(
+      res,
+      200,
+      renderMiniAppPage({
+        appName: cfg.web?.miniApp?.title || cfg.app?.displayName,
+        ui,
+        nonce: cspNonce
+      })
+    );
+  }
+
+  if (method === "POST" && pathname === "/api/mini-app/auth") {
+    if (cfg.web?.miniApp?.enabled !== true) return sendJson(res, 404, { error: "miniapp_disabled" });
+    let body = {};
+    try {
+      body = await readJson(req, 256 * 1024);
+    } catch {
+      return sendJson(res, 413, { error: "body_too_large" });
+    }
+    let verified = null;
+    try {
+      verified = verifyMiniAppInitData({
+        initData: body?.initData,
+        botToken: cfg.telegram?.token,
+        maxAgeSeconds: cfg.web?.miniApp?.authMaxAgeSeconds
+      });
+    } catch (err) {
+      return sendJson(res, 401, { error: String(err?.message || "miniapp_auth_failed") });
+    }
+    const viewer = resolveMiniAppUser(cfg, verified.user.id, verified.user.username);
+    if (!viewer) return sendJson(res, 403, { error: "miniapp_user_not_allowed" });
+    const sid = miniSessions.create(`tg:${viewer.userId}`, viewer.role);
+    const secure = isHttpsRequest(req) || cfg.web?.cookieSecure === true;
+    res.setHeader(
+      "Set-Cookie",
+      makeSetCookie({
+        name: miniAppCookieName(),
+        value: sid,
+        maxAgeSeconds: Number(cfg.web?.miniApp?.sessionTtlSeconds || 0) || 6 * 60 * 60,
+        httpOnly: true,
+        sameSite: "Strict",
+        secure
+      })
+    );
+    return sendJson(res, 200, {
+      ok: true,
+      viewer: {
+        userId: viewer.userId,
+        username: verified.user.username || viewer.username,
+        label: viewer.label,
+        role: viewer.role,
+        roleLevel: roleToLevel(viewer.role)
+      },
+      miniApp: {
+        publicUrl: getMiniAppPublicUrl(cfg)
+      }
+    });
+  }
+
+  if (pathname.startsWith("/api/mini-app/")) {
+    if (pathname !== "/api/mini-app/auth" && !miniAuth.ok) return sendJson(res, 401, { error: "miniapp_unauthorized" });
+  }
+
+  if (method === "GET" && pathname === "/api/mini-app/bootstrap") {
+    if (!miniRequireRole(0)) return;
+    return sendJson(
+      res,
+      200,
+      buildMiniAppBootstrap({
+        cfg,
+        stateStore,
+        telegram,
+        viewer: {
+          userId: miniAuth.userId,
+          username: miniAuth.username,
+          label: miniAuth.label,
+          role: miniAuth.role,
+          roleLevel: miniAuth.roleLevel
+        }
+      })
+    );
+  }
+
+  if (method === "POST" && pathname === "/api/mini-app/chat-autoreply") {
+    if (!miniRequireRole(1)) return;
+    let body = {};
+    try {
+      body = await readJson(req, 32 * 1024);
+    } catch {
+      return sendJson(res, 413, { error: "body_too_large" });
+    }
+    const chatId = String(body?.chatId || "").trim();
+    if (!chatId) return sendJson(res, 400, { error: "chatId_required" });
+    const autoReply = body?.autoReply === true;
+    const chat = stateStore.updateChatSettings(chatId, (item) => {
+      item.autoReply = autoReply;
+    });
+    await stateStore.flush?.();
+    return sendJson(res, 200, { ok: true, chat: { chatId, autoReply: chat.autoReply } });
+  }
+
+  if (method === "POST" && pathname === "/api/mini-app/chat-allow") {
+    if (!miniRequireRole(2)) return;
+    let body = {};
+    try {
+      body = await readJson(req, 32 * 1024);
+    } catch {
+      return sendJson(res, 413, { error: "body_too_large" });
+    }
+    const chatId = String(body?.chatId || "").trim();
+    if (!chatId) return sendJson(res, 400, { error: "chatId_required" });
+    const next = JSON.parse(JSON.stringify(cfg));
+    next.telegram ??= {};
+    const ids = new Set(Array.isArray(next.telegram.allowedChatIds) ? next.telegram.allowedChatIds.map((item) => String(item)) : []);
+    ids.add(chatId);
+    next.telegram.allowedChatIds = Array.from(ids.values());
+    await configStore.set(next);
+    return sendJson(res, 200, { ok: true, chatId });
+  }
+
+  if (method === "POST" && pathname === "/api/mini-app/reload") {
+    if (!miniRequireRole(2)) return;
+    const reloaded = configStore.reload();
+    return sendJson(res, 200, { ok: true, config: buildConfigSummary(reloaded) });
   }
 
   const auth = getAuth({ req, cfg, sessions });
@@ -433,18 +653,14 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
   if (method === "GET" && pathname === "/api/known-chats") {
     const items = stateStore.listKnownChats().map((item) => {
       const provider = getEffectiveChatProvider(cfg, item);
-      const ownerUserId = String(item?.globalPersonaUserId || "").trim();
-      const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
-      const ownerDisplay = ownerUserId
-        ? String(ownerProfile?.customDisplayName || ownerProfile?.username || ownerProfile?.firstName || ownerUserId).trim() || ownerUserId
-        : "";
+      const groupPersona = buildGroupPersonaWebState({ stateStore, chatId: item.chatId, chatSettings: item });
       return {
         ...item,
         replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: item }),
         providerEffective: provider.providerId,
         providerNameEffective: provider.providerName,
         providerInherited: provider.inherited,
-        globalPersonaOwnerDisplay: ownerDisplay
+        ...groupPersona
       };
     });
     return sendJson(res, 200, { items });
@@ -560,16 +776,12 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
     const chatId = String(url.searchParams.get("chatId") || "");
     if (!chatId) return sendJson(res, 400, { error: "chatId_required" });
     const settings = stateStore.getChatSettings(chatId);
-    const ownerUserId = String(settings?.globalPersonaUserId || "").trim();
-    const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
     return sendJson(res, 200, {
       chatId,
       settings: {
         ...settings,
         replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: settings }),
-        globalPersonaOwnerDisplay: ownerUserId
-          ? String(ownerProfile?.customDisplayName || ownerProfile?.username || ownerProfile?.firstName || ownerUserId).trim() || ownerUserId
-          : ""
+        ...buildGroupPersonaWebState({ stateStore, chatId, chatSettings: settings })
       }
     });
   }
@@ -586,31 +798,37 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
     if (!chatId) return sendJson(res, 400, { error: "chatId_required" });
     const patch = body?.patch && typeof body.patch === "object" ? body.patch : {};
     const before = stateStore.getChatSettings(chatId);
-    if (patch.globalPersonaEnabled === true && !String(patch.globalPersonaUserId ?? before?.globalPersonaUserId ?? "").trim()) {
+    const nextMode =
+      patch.globalPersonaMode !== undefined
+        ? normalizeGlobalPersonaMode(patch.globalPersonaMode)
+        : normalizeGlobalPersonaMode(before?.globalPersonaMode);
+    const nextEnabled = patch.globalPersonaEnabled !== undefined ? Boolean(patch.globalPersonaEnabled) : Boolean(before?.globalPersonaEnabled);
+    if (nextEnabled === true && nextMode === "single" && !String(patch.globalPersonaUserId ?? before?.globalPersonaUserId ?? "").trim()) {
       return sendJson(res, 400, { error: "global_persona_user_id_required" });
     }
     const saved = stateStore.updateChatSettings(chatId, (c) => {
       if (patch.autoReply !== undefined) c.autoReply = Boolean(patch.autoReply);
       if (patch.replyStyle !== undefined) c.replyStyle = normalizeOptionalChatReplyStyle(patch.replyStyle);
       if (patch.globalPersonaEnabled !== undefined) c.globalPersonaEnabled = Boolean(patch.globalPersonaEnabled);
+      if (patch.globalPersonaMode !== undefined) c.globalPersonaMode = normalizeGlobalPersonaMode(patch.globalPersonaMode);
       if (patch.globalPersonaUserId !== undefined) c.globalPersonaUserId = String(patch.globalPersonaUserId || "").trim();
       if (patch.globalPersonaReplyLimit !== undefined) {
         const limit = Math.max(0, Math.min(1000000, Math.trunc(Number(patch.globalPersonaReplyLimit) || 0)));
         c.globalPersonaReplyLimit = limit;
       }
-      if (patch.resetGlobalPersonaReplyCount === true) c.globalPersonaReplyCount = 0;
+      if (patch.resetGlobalPersonaReplyCount === true) resetGroupPersonaUsageState(c);
       const ownerChanged = String(before?.globalPersonaUserId || "").trim() !== String(c.globalPersonaUserId || "").trim();
       const enabledChanged = Boolean(before?.globalPersonaEnabled) !== Boolean(c.globalPersonaEnabled);
-      if (ownerChanged) c.globalPersonaReplyCount = 0;
-      if (enabledChanged && c.globalPersonaEnabled !== true) c.globalPersonaReplyCount = 0;
+      const modeChanged = normalizeGlobalPersonaMode(before?.globalPersonaMode) !== normalizeGlobalPersonaMode(c.globalPersonaMode);
+      if (ownerChanged || modeChanged) resetGroupPersonaUsageState(c);
+      if (enabledChanged && c.globalPersonaEnabled !== true) c.globalPersonaEnabled = false;
     });
     const personaModeChanged =
       Boolean(before?.globalPersonaEnabled) !== Boolean(saved?.globalPersonaEnabled) ||
-      String(before?.globalPersonaUserId || "").trim() !== String(saved?.globalPersonaUserId || "").trim();
+      String(before?.globalPersonaUserId || "").trim() !== String(saved?.globalPersonaUserId || "").trim() ||
+      normalizeGlobalPersonaMode(before?.globalPersonaMode) !== normalizeGlobalPersonaMode(saved?.globalPersonaMode);
     const contextReset = personaModeChanged && clearConversationHistoryForChat(stateStore, chatId);
     await stateStore.flush?.();
-    const ownerUserId = String(saved?.globalPersonaUserId || "").trim();
-    const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
     return sendJson(res, 200, {
       ok: true,
       chatId,
@@ -618,9 +836,7 @@ async function handle({ req, res, logger, configStore, stateStore, telegram, ses
       settings: {
         ...saved,
         replyStyleEffective: getEffectiveChatReplyStyle({ cfg, chatSettings: saved }),
-        globalPersonaOwnerDisplay: ownerUserId
-          ? String(ownerProfile?.customDisplayName || ownerProfile?.username || ownerProfile?.firstName || ownerUserId).trim() || ownerUserId
-          : ""
+        ...buildGroupPersonaWebState({ stateStore, chatId, chatSettings: saved })
       }
     });
   }

@@ -3,6 +3,17 @@ import { searxngImageSearch, searxngSearch } from "../search.js";
 import { bt } from "../botI18n.js";
 import { menuMarkup, menuText } from "./menu.js";
 import {
+  getGroupPersonaOptOut,
+  getGroupPersonaQueueEntries,
+  getUserProfileDisplayName,
+  isGroupChatType,
+  removeGroupPersonaQueueMember,
+  resetGroupPersonaUsageState,
+  resolveGroupPersonaSelection,
+  setGroupPersonaOptOut,
+  upsertGroupPersonaQueueMember
+} from "../groupPersona.js";
+import {
   clampText,
   getActiveUserPersona,
   getActiveUserPrompt,
@@ -57,7 +68,9 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
       `${t("status.custom_name")}: ${String(userProfile?.customDisplayName || "").trim() || t("profile.custom_name_empty")}`,
       `${t("status.user_prompt")}: ${activePrompt.slot ? t(`profile.user_prompt_${activePrompt.slot}`) : t("profile.user_prompt_off")}`,
       `${t("status.user_persona")}: ${describePersonaState({ t, profile: userProfile, activePersona })}`,
-      ...(isGroupChatType(chatType) ? [`${t("status.global_persona")}: ${describeGlobalPersonaStatus({ t, stateStore, chatSettings })}`] : []),
+      ...(isGroupChatType(chatType)
+        ? [`${t("status.global_persona")}: ${describeGlobalPersonaStatus({ t, stateStore, chatId, userId, chatType, chatSettings })}`]
+        : []),
       `${t("status.facts")}: ${factsCount}`,
       `${t("status.history")}: ${historyCount}`
     ].join("\n");
@@ -204,7 +217,8 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
   if (command === "globalpersona") {
     if (!isGroupChatType(chatType)) return t("globalpersona.group_only");
     const raw = String(args || "").trim();
-    if (!raw || raw.toLowerCase() === "status") return describeGlobalPersonaDetail({ t, stateStore, chatSettings });
+    if (!raw || raw.toLowerCase() === "status")
+      return describeGlobalPersonaDetail({ t, stateStore, chatId, userId, chatType, chatSettings });
     const parts = raw.split(/\s+/).filter(Boolean);
     const sub = String(parts[0] || "").toLowerCase();
 
@@ -215,47 +229,134 @@ export async function handleCommand({ logger, configStore, stateStore, chatId, u
       if (parts[1] !== undefined && (!Number.isFinite(nextLimit) || nextLimit < 0)) return t("usage.globalpersona");
       const normalizedLimit = clamp(Math.trunc(Number(nextLimit ?? 100) || 0), 0, 1000000);
       const prevEnabled = chatSettings?.globalPersonaEnabled === true;
-      const prevOwnerUserId = String(chatSettings?.globalPersonaUserId || "");
-      const changed = !prevEnabled || prevOwnerUserId !== String(userId);
+      const prevOwnerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
+      const prevMode = String(chatSettings?.globalPersonaMode || "single").trim().toLowerCase();
+      const changed = !prevEnabled || prevMode !== "single" || prevOwnerUserId !== String(userId);
       stateStore.updateChatSettings(chatId, (c) => {
         c.globalPersonaEnabled = true;
+        c.globalPersonaMode = "single";
         c.globalPersonaUserId = String(userId);
         c.globalPersonaReplyLimit = normalizedLimit;
-        if (changed) c.globalPersonaReplyCount = 0;
+        if (changed) resetGroupPersonaUsageState(c);
       });
       if (changed) clearConversationHistoryForChat({ stateStore, chatId, chatType });
       return withHistoryResetNotice(
-        `${t("globalpersona.enabled", { userId: String(userId), limit: formatLimitValue(t, normalizedLimit) })}\n${t("globalpersona.note_autoreply")}`,
+        `${t("globalpersona.enabled", {
+          userId: getUserProfileDisplayName(userProfile, String(userId)) || String(userId),
+          limit: formatLimitValue(t, normalizedLimit)
+        })}\n${t("globalpersona.note_autoreply")}`,
         changed,
         t
       );
     }
 
     if (sub === "off") {
-      const changed = chatSettings?.globalPersonaEnabled === true || String(chatSettings?.globalPersonaUserId || "").trim() !== "";
+      const changed = chatSettings?.globalPersonaEnabled === true;
       stateStore.updateChatSettings(chatId, (c) => {
         c.globalPersonaEnabled = false;
-        c.globalPersonaUserId = "";
-        c.globalPersonaReplyCount = 0;
       });
       if (changed) clearConversationHistoryForChat({ stateStore, chatId, chatType });
       return withHistoryResetNotice(t("globalpersona.disabled"), changed, t);
     }
 
+    if (sub === "mode") {
+      const nextMode = String(parts[1] || "").trim().toLowerCase();
+      if (nextMode !== "single" && nextMode !== "sequential" && nextMode !== "random") return t("usage.globalpersona");
+      const prevEnabled = chatSettings?.globalPersonaEnabled === true;
+      const prevMode = String(chatSettings?.globalPersonaMode || "single").trim().toLowerCase();
+      const callerPersonaText = clampText(userProfile?.customPersona, 12000);
+      const changed = !prevEnabled || prevMode !== nextMode;
+      stateStore.updateChatSettings(chatId, (c) => {
+        c.globalPersonaEnabled = true;
+        c.globalPersonaMode = nextMode;
+        if (nextMode === "single" && !String(c.globalPersonaUserId || "").trim() && callerPersonaText) c.globalPersonaUserId = String(userId);
+        if (changed) resetGroupPersonaUsageState(c);
+      });
+      if (changed) clearConversationHistoryForChat({ stateStore, chatId, chatType });
+      return withHistoryResetNotice(t("globalpersona.mode_set", { mode: t(`globalpersona.mode_${nextMode}`) }), changed, t);
+    }
+
+    if (sub === "join") {
+      const personaText = clampText(userProfile?.customPersona, 12000);
+      if (!personaText) return t("globalpersona.no_persona");
+      const queueEntries = getGroupPersonaQueueEntries({ chatSettings, stateStore });
+      const currentEntry = queueEntries.find((entry) => entry.userId === String(userId));
+      const nextLimit = parts[1] === undefined ? currentEntry?.replyLimit ?? chatSettings?.globalPersonaReplyLimit : Number(parts[1]);
+      if (parts[1] !== undefined && (!Number.isFinite(nextLimit) || nextLimit < 0)) return t("usage.globalpersona");
+      const normalizedLimit = clamp(Math.trunc(Number(nextLimit ?? 100) || 0), 0, 1000000);
+      const prevEnabled = chatSettings?.globalPersonaEnabled === true;
+      const prevMode = String(chatSettings?.globalPersonaMode || "single").trim().toLowerCase();
+      const changed = !prevEnabled || prevMode === "single" || !currentEntry;
+      stateStore.updateChatSettings(chatId, (c) => {
+        upsertGroupPersonaQueueMember(c, { userId, replyLimit: normalizedLimit });
+        c.globalPersonaEnabled = true;
+        if (String(c.globalPersonaMode || "single").trim().toLowerCase() === "single") c.globalPersonaMode = "sequential";
+        if (changed) resetGroupPersonaUsageState(c);
+      });
+      if (changed) clearConversationHistoryForChat({ stateStore, chatId, chatType });
+      return withHistoryResetNotice(
+        currentEntry
+          ? t("globalpersona.join_updated", { limit: formatLimitValue(t, normalizedLimit) })
+          : t("globalpersona.joined", { limit: formatLimitValue(t, normalizedLimit) }),
+        changed,
+        t
+      );
+    }
+
+    if (sub === "leave") {
+      const queueEntries = getGroupPersonaQueueEntries({ chatSettings, stateStore });
+      const currentEntry = queueEntries.find((entry) => entry.userId === String(userId));
+      if (!currentEntry) return t("globalpersona.not_in_queue");
+      stateStore.updateChatSettings(chatId, (c) => {
+        removeGroupPersonaQueueMember(c, userId);
+        resetGroupPersonaUsageState(c);
+      });
+      clearConversationHistoryForChat({ stateStore, chatId, chatType });
+      return withHistoryResetNotice(t("globalpersona.left"), true, t);
+    }
+
     if (sub === "limit") {
       const nextLimit = Number(parts[1]);
       if (!Number.isFinite(nextLimit) || nextLimit < 0) return t("usage.globalpersona");
+      const normalizedLimit = clamp(Math.trunc(nextLimit), 0, 1000000);
+      const mode = String(chatSettings?.globalPersonaMode || "single").trim().toLowerCase();
+      if (mode === "single") {
+        stateStore.updateChatSettings(chatId, (c) => {
+          c.globalPersonaReplyLimit = normalizedLimit;
+        });
+        return t("globalpersona.limit_set", { limit: formatLimitValue(t, normalizedLimit) });
+      }
+      const queueEntries = getGroupPersonaQueueEntries({ chatSettings, stateStore });
+      const currentEntry = queueEntries.find((entry) => entry.userId === String(userId));
+      if (!currentEntry) return t("globalpersona.not_in_queue");
       stateStore.updateChatSettings(chatId, (c) => {
-        c.globalPersonaReplyLimit = clamp(Math.trunc(nextLimit), 0, 1000000);
+        upsertGroupPersonaQueueMember(c, { userId, replyLimit: normalizedLimit });
       });
-      return t("globalpersona.limit_set", { limit: formatLimitValue(t, nextLimit) });
+      return t("globalpersona.limit_member_set", { limit: formatLimitValue(t, normalizedLimit) });
     }
 
     if (sub === "reset") {
       stateStore.updateChatSettings(chatId, (c) => {
-        c.globalPersonaReplyCount = 0;
+        resetGroupPersonaUsageState(c);
       });
       return t("globalpersona.count_reset");
+    }
+
+    if (sub === "optout") {
+      const next = String(parts[1] || "").trim().toLowerCase();
+      const current = getGroupPersonaOptOut({ stateStore, chatId, userId });
+      if (!next || next === "status") return current ? t("globalpersona.optout_on") : t("globalpersona.optout_off");
+      if (next !== "on" && next !== "off") return t("usage.globalpersona");
+      const enabled = next === "on";
+      setGroupPersonaOptOut({ stateStore, chatId, userId, enabled });
+      const didReset = maybeClearConversationHistory({
+        changed: current !== enabled,
+        stateStore,
+        chatId,
+        userId,
+        chatType
+      });
+      return withHistoryResetNotice(enabled ? t("globalpersona.optout_on") : t("globalpersona.optout_off"), didReset, t);
     }
 
     return t("usage.globalpersona");
@@ -496,11 +597,6 @@ function describePersonaState({ t, profile, activePersona }) {
   return t("profile.persona_state_off");
 }
 
-function isGroupChatType(chatType) {
-  const type = String(chatType || "").trim();
-  return type === "group" || type === "supergroup";
-}
-
 function getStoredPersonaText(profile) {
   return clampText(profile?.customPersona, 12000);
 }
@@ -510,34 +606,88 @@ function formatLimitValue(t, value) {
   return limit > 0 ? String(limit) : t("globalpersona.unlimited");
 }
 
-function describeGlobalPersonaStatus({ t, stateStore, chatSettings }) {
-  const enabled = chatSettings?.globalPersonaEnabled === true;
-  if (!enabled) return t("globalpersona.status_off_short");
-  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
-  const count = clamp(Math.trunc(Number(chatSettings?.globalPersonaReplyCount || 0) || 0), 0, 1000000000);
-  const limitText = formatLimitValue(t, chatSettings?.globalPersonaReplyLimit);
-  const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
-  const hasPersona = Boolean(getStoredPersonaText(ownerProfile));
-  const ownerText = ownerUserId || t("globalpersona.owner_missing_short");
-  const suffix = hasPersona ? "" : ` · ${t("globalpersona.owner_persona_missing_short")}`;
-  return t("globalpersona.status_on_short", { owner: ownerText, count: String(count), limit: limitText }) + suffix;
+function describeGlobalPersonaStatus({ t, stateStore, chatId, userId, chatType, chatSettings }) {
+  const resolved = resolveGroupPersonaSelection({ stateStore, chatId, userId, chatType, chatSettings });
+  if (!resolved.globalEnabled) return t("globalpersona.status_off_short");
+  if (resolved.mode === "single") {
+    const ownerProfile = resolved.ownerUserId ? stateStore.getUserProfile?.(resolved.ownerUserId) : null;
+    const ownerText = getUserProfileDisplayName(ownerProfile, resolved.ownerUserId) || t("globalpersona.owner_missing_short");
+    const suffix = resolved.reason === "missing_persona" ? ` · ${t("globalpersona.owner_persona_missing_short")}` : "";
+    return (
+      t("globalpersona.status_on_short", {
+        mode: t("globalpersona.mode_single"),
+        owner: ownerText,
+        count: String(resolved.replyCount),
+        limit: formatLimitValue(t, resolved.replyLimit)
+      }) + suffix
+    );
+  }
+  const nextText = resolved.enabled ? resolved.selectedDisplayName : t(`globalpersona.reason_${resolved.reason}`);
+  return t("globalpersona.status_queue_short", {
+    mode: t(`globalpersona.mode_${resolved.mode}`),
+    members: String(resolved.queueEntries.length),
+    next: nextText
+  });
 }
 
-function describeGlobalPersonaDetail({ t, stateStore, chatSettings }) {
-  const enabled = chatSettings?.globalPersonaEnabled === true;
-  if (!enabled) return `${t("globalpersona.status_off")}\n${t("globalpersona.note_autoreply")}`;
-  const ownerUserId = String(chatSettings?.globalPersonaUserId || "").trim();
-  const ownerProfile = ownerUserId ? stateStore.getUserProfile?.(ownerUserId) : null;
-  const ownerLabel = ownerUserId || t("globalpersona.owner_missing_short");
-  const personaText = getStoredPersonaText(ownerProfile);
-  const count = clamp(Math.trunc(Number(chatSettings?.globalPersonaReplyCount || 0) || 0), 0, 1000000000);
-  return [
-    t("globalpersona.status_on"),
-    `${t("globalpersona.owner")}: ${ownerLabel}`,
-    `${t("globalpersona.replies")}: ${count}/${formatLimitValue(t, chatSettings?.globalPersonaReplyLimit)}`,
-    `${t("globalpersona.persona_ready")}: ${personaText ? t("globalpersona.ready_yes") : t("globalpersona.ready_no")}`,
-    t("globalpersona.note_autoreply")
-  ].join("\n");
+function describeGlobalPersonaDetail({ t, stateStore, chatId, userId, chatType, chatSettings }) {
+  const resolved = resolveGroupPersonaSelection({ stateStore, chatId, userId, chatType, chatSettings });
+  const lines = [
+    resolved.globalEnabled ? t("globalpersona.status_on") : t("globalpersona.status_off"),
+    `${t("globalpersona.mode")}: ${t(`globalpersona.mode_${resolved.mode}`)}`,
+    `${t("globalpersona.optout")}: ${resolved.targetOptOut ? t("memory.on") : t("memory.off")}`
+  ];
+
+  if (resolved.mode === "single") {
+    const ownerProfile = resolved.ownerUserId ? stateStore.getUserProfile?.(resolved.ownerUserId) : null;
+    const ownerLabel = getUserProfileDisplayName(ownerProfile, resolved.ownerUserId) || t("globalpersona.owner_missing_short");
+    const personaText = getStoredPersonaText(ownerProfile);
+    lines.push(`${t("globalpersona.owner")}: ${ownerLabel}`);
+    lines.push(`${t("globalpersona.replies")}: ${resolved.replyCount}/${formatLimitValue(t, resolved.replyLimit)}`);
+    lines.push(`${t("globalpersona.persona_ready")}: ${personaText ? t("globalpersona.ready_yes") : t("globalpersona.ready_no")}`);
+    if (resolved.enabled) lines.push(`${t("globalpersona.current_selection")}: ${resolved.selectedDisplayName}`);
+    else if (resolved.globalEnabled) lines.push(`${t("globalpersona.current_selection")}: ${t(`globalpersona.reason_${resolved.reason}`)}`);
+    lines.push(t("globalpersona.note_autoreply"));
+    return lines.join("\n");
+  }
+
+  lines.push(`${t("globalpersona.replies")}: ${resolved.replyCount}`);
+  lines.push(`${t("globalpersona.queue_members")}: ${resolved.queueEntries.length}`);
+  lines.push(
+    `${t("globalpersona.current_selection")}: ${
+      resolved.enabled ? resolved.selectedDisplayName : t(`globalpersona.reason_${resolved.reason}`)
+    }`
+  );
+  lines.push(t("globalpersona.queue_title"));
+  const queueLines = buildGlobalPersonaQueueLines({ t, resolved });
+  if (queueLines.length === 0) lines.push(`- ${t("globalpersona.queue_empty")}`);
+  else lines.push(...queueLines);
+  lines.push(t("globalpersona.note_autoreply"));
+  return lines.join("\n");
+}
+
+function buildGlobalPersonaQueueLines({ t, resolved }) {
+  const queueEntries = Array.isArray(resolved?.queueEntries) ? resolved.queueEntries : [];
+  if (queueEntries.length === 0) return [];
+  const lines = [];
+  const cursor = queueEntries.length > 0 ? clamp(Math.trunc(Number(resolved?.cursor || 0) || 0), 0, 1000000) % queueEntries.length : 0;
+  const mode = String(resolved?.mode || "sequential");
+  for (const entry of queueEntries) {
+    const label =
+      mode === "random"
+        ? t("globalpersona.queue_random_item")
+        : t("globalpersona.queue_position", { pos: String(((entry.index - cursor + queueEntries.length) % queueEntries.length) + 1) });
+    const state = entry.personaReady
+      ? entry.exhausted
+        ? t("globalpersona.entry_state_exhausted")
+        : t("globalpersona.entry_state_ready")
+      : t("globalpersona.entry_state_missing_persona");
+    const quota = `${entry.replyCount}/${formatLimitValue(t, entry.replyLimit)}`;
+    const remaining = entry.remaining === null ? t("globalpersona.remaining_unlimited") : t("globalpersona.remaining_count", { count: String(entry.remaining) });
+    const nextMark = resolved.enabled && entry.userId === resolved.selectedUserId ? ` · ${t("globalpersona.queue_next")}` : "";
+    lines.push(`- ${label} ${entry.displayName} (${entry.userId}) · ${quota} · ${remaining} · ${state}${nextMark}`);
+  }
+  return lines;
 }
 
 function previewText(value, maxLen) {

@@ -29,7 +29,22 @@
   "web": {
     "username": "admin",
     "password": "change_me",
-    "cookieSecure": false
+    "cookieSecure": false,
+    "miniApp": {
+      "enabled": false,
+      "publicBaseUrl": "https://example.com",
+      "buttonText": "Panel",
+      "title": "Telegram Panel",
+      "authMaxAgeSeconds": 3600,
+      "sessionTtlSeconds": 21600,
+      "users": [
+        {
+          "userId": "123456789",
+          "label": "Owner",
+          "role": "admin"
+        }
+      ]
+    }
   },
   "stateStorage": {
     "type": "json",

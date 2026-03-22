@@ -253,6 +253,7 @@ function normalizeProvider(p) {
   provider.model = String(provider.model || "");
   provider.responsesStyle = String(provider.responsesStyle || "instructions+messages");
   provider.responsesContentFormat = String(provider.responsesContentFormat || "text");
+  provider.streamMode = provider.streamMode === "always" ? "always" : "auto";
   provider.extraHeaders = typeof provider.extraHeaders === "object" && provider.extraHeaders ? provider.extraHeaders : {};
   provider.allowPrivateNetwork = provider.allowPrivateNetwork === true;
   return provider;

@@ -25,6 +25,18 @@ function renderForm(cfg) {
     c.telegram && c.telegram.queue && c.telegram.queue.maxConcurrentJobs != null ? c.telegram.queue.maxConcurrentJobs : 0;
   $("fTgMaxPendingPerChat").value =
     c.telegram && c.telegram.queue && c.telegram.queue.maxPendingPerChat != null ? c.telegram.queue.maxPendingPerChat : 0;
+  $("fMiniAppEnabled").value = c.web && c.web.miniApp && c.web.miniApp.enabled === true ? "true" : "false";
+  $("fMiniAppPublicBaseUrl").value =
+    c.web && c.web.miniApp && c.web.miniApp.publicBaseUrl
+      ? c.web.miniApp.publicBaseUrl
+      : c.telegram && c.telegram.delivery && c.telegram.delivery.publicBaseUrl
+        ? c.telegram.delivery.publicBaseUrl
+        : "";
+  $("fMiniAppButtonText").value =
+    c.web && c.web.miniApp && c.web.miniApp.buttonText ? c.web.miniApp.buttonText : "Panel";
+  $("fMiniAppTitle").value =
+    c.web && c.web.miniApp && c.web.miniApp.title ? c.web.miniApp.title : "Telegram Panel";
+  $("fMiniAppUsers").value = miniAppUsersToText(c.web && c.web.miniApp ? c.web.miniApp.users : []);
 
   $("fTimeoutMs").value = c.openai && c.openai.timeoutMs != null ? c.openai.timeoutMs : 60000;
   $("fTemp").value = c.openai && c.openai.temperature != null ? c.openai.temperature : 0.7;

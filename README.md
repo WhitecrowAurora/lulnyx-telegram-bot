@@ -39,8 +39,11 @@ Supports OpenAI-compatible `/v1/responses` and `/v1/chat/completions`.
 - `http://127.0.0.1:<server.port>/` (default: `3210`)
 - `http://127.0.0.1:<server.port>/`（默认 `3210`）
 
-If `config.json` is missing, a local-only setup wizard will create it.
-如果没有 `config.json`，会进入“仅本机可用”的初始化向导自动创建。
+If `config.json` is missing, a local-only setup wizard will create it and guide you through admin login, server bind, storage mode, Telegram basics, optional provider setup, and optional Mini App fields.
+如果没有 `config.json`，会进入“仅本机可用”的初始化向导，帮助你完成管理员账号、服务监听、存储模式、Telegram 基础配置、可选提供方和可选 Mini App 字段。
+
+HTTPS/public URL is only required when you want Webhook or Telegram Mini App during setup; if you start with polling only, you can skip it and enable it later from Settings.
+只有在初始化阶段就要启用 Webhook 或 Telegram Mini App 时，才需要填写 HTTPS/公网地址；如果先用 polling，可以跳过，后续再到设置页开启。
 
 ## Single-binary build (optional)
 ## 单文件可执行（可选）
@@ -68,6 +71,8 @@ Compatibility note: Linux SEA binaries depend on system `glibc`.
 - `responsesStyle`（仅 responses）：`"instructions+messages"`（默认）或 `"all_messages"`
 - `responsesContentFormat` (responses only): `"text"` (default) or `"openai_array"`
 - `responsesContentFormat`（仅 responses）：`"text"`（默认）或 `"openai_array"`
+- `streamMode`: `"auto"` (default; prefer JSON, but also parse SSE if returned) or `"always"` (request streaming and aggregate server-side)
+- `streamMode`：`"auto"`（默认；优先普通 JSON，但若返回 SSE 也会解析）或 `"always"`（主动请求流式并在服务端聚合）
 - `extraHeaders`: optional extra HTTP headers
 - `extraHeaders`：可选的额外 HTTP 请求头
 

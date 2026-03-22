@@ -53,6 +53,7 @@ $("btnAddProvider").addEventListener("click", () => {
     baseUrl: "",
     apiKey: "",
     apiType: "responses",
+    streamMode: "auto",
     model: "gpt-4.1-mini",
     responsesStyle: "instructions+messages",
     responsesContentFormat: "text",

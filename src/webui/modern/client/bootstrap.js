@@ -67,6 +67,7 @@ const I = {
   labelExtraHeaders: ${tj("label.extra_headers")},
   labelResponsesStyle: ${tj("label.responses_style")},
   labelResponsesContentFormat: ${tj("label.responses_content_format")},
+  labelStreamMode: ${tj("label.stream_mode")},
   labelAllowPrivateNetwork: ${tj("label.allow_private_network")},
   labelSystemPrompt: ${tj("label.system_prompt")},
   labelSystemPersona: ${tj("label.system_persona")},
@@ -81,6 +82,8 @@ const I = {
   labelMentionOnly: ${tj("label.mention_only")},
   labelNotConfigured: ${tj("label.not_configured")},
   labelUnlimited: ${tj("label.unlimited")},
+  optionStreamAuto: ${tj("option.stream_auto")},
+  optionStreamAlways: ${tj("option.stream_always")},
 
   wordProvider: ${tj("word.provider")},
   wordPrompt: ${tj("word.prompt")},

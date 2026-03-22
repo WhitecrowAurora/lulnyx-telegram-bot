@@ -12,20 +12,73 @@ export function buildSetupConfig({ body, prev }) {
   const password = String(b.password || "");
   if (password.length < 8) throw new Error("admin password must be at least 8 characters");
 
+  const publicBaseUrl = String(b.publicBaseUrl || "").trim();
+  const deliveryMode = b.telegramDeliveryMode === "webhook" ? "webhook" : "polling";
+  const miniAppEnabled = b.miniAppEnabled === true || String(b.miniAppEnabled || "") === "true";
+  const miniAppUserId = String(b.miniAppUserId || "").trim();
+  const needsHttps = deliveryMode === "webhook" || miniAppEnabled;
+  if (needsHttps && !publicBaseUrl) {
+    throw new Error("https public base URL is required for webhook or mini app");
+  }
+  if (publicBaseUrl && !publicBaseUrl.toLowerCase().startsWith("https://")) {
+    throw new Error("public base URL must start with https://");
+  }
+  if (miniAppEnabled && !miniAppUserId) {
+    throw new Error("mini app admin user ID is required when mini app is enabled");
+  }
+
   const next = JSON.parse(JSON.stringify(prev || {}));
+
   next.app ??= {};
   next.app.displayName = String(b.displayName || next.app.displayName || "My Telegram Bot");
   next.app.setupCompleted = true;
 
+  next.server ??= {};
+  next.server.host = String(b.serverHost || "").trim() || "127.0.0.1";
+  next.server.port = Number(b.serverPort || 3210) || 3210;
+
+  next.stateStorage ??= {};
+  next.stateStorage.type = String(b.stateStorageType || "") === "sqlite" ? "sqlite" : "json";
+
   next.web ??= {};
   next.web.username = username;
   next.web.password = hashPassword(password);
+  next.web.cookieSecure = next.web.cookieSecure === true;
+  next.web.miniApp = {
+    enabled: miniAppEnabled,
+    publicBaseUrl,
+    buttonText: String(b.miniAppButtonText || "Panel").trim() || "Panel",
+    title: String(b.miniAppTitle || "Telegram Panel").trim() || "Telegram Panel",
+    authMaxAgeSeconds: Number(next.web?.miniApp?.authMaxAgeSeconds || 3600) || 3600,
+    sessionTtlSeconds: Number(next.web?.miniApp?.sessionTtlSeconds || 21600) || 21600,
+    users: miniAppEnabled
+      ? [
+          {
+            userId: miniAppUserId,
+            label: "Owner",
+            role: "admin"
+          }
+        ]
+      : []
+  };
 
   const token = String(b.telegramToken || "").trim();
-  if (token) {
-    next.telegram ??= {};
-    next.telegram.token = token;
-  }
+  next.telegram ??= {};
+  next.telegram.token = token;
+  next.telegram.allowAll = next.telegram.allowAll === true;
+  next.telegram.allowedChatIds = Array.isArray(next.telegram.allowedChatIds) ? next.telegram.allowedChatIds : [];
+  next.telegram.allowedUserIds = Array.isArray(next.telegram.allowedUserIds) ? next.telegram.allowedUserIds : [];
+  next.telegram.autoReplyByDefault = next.telegram.autoReplyByDefault === true;
+  next.telegram.delivery = {
+    mode: deliveryMode,
+    publicBaseUrl,
+    webhookSecret: "",
+    dropPendingUpdates: false
+  };
+  next.telegram.queue ??= {};
+  next.telegram.queue.minIntervalMs = Number(next.telegram.queue.minIntervalMs || 0) || 0;
+  next.telegram.queue.maxConcurrentJobs = Number(next.telegram.queue.maxConcurrentJobs || 0) || 0;
+  next.telegram.queue.maxPendingPerChat = Number(next.telegram.queue.maxPendingPerChat || 0) || 0;
 
   const p = b.provider && typeof b.provider === "object" ? b.provider : null;
   const baseUrl = String(p?.baseUrl || "").trim();
@@ -33,7 +86,6 @@ export function buildSetupConfig({ body, prev }) {
   const model = String(p?.model || "").trim();
   const apiType = p?.apiType === "chat_completions" ? "chat_completions" : "responses";
   if (baseUrl && apiKey) {
-    next.providers = Array.isArray(next.providers) ? next.providers : [];
     const id = apiType === "chat_completions" ? "provider-chat" : "provider-responses";
     next.providers = [
       {
@@ -42,11 +94,15 @@ export function buildSetupConfig({ body, prev }) {
         baseUrl,
         apiKey,
         apiType,
+        streamMode: "auto",
         model: model || "gpt-4.1-mini",
         responsesStyle: "instructions+messages"
       }
     ];
     next.defaultProviderId = id;
+  } else {
+    next.providers = [];
+    next.defaultProviderId = "";
   }
 
   return next;

@@ -29,6 +29,7 @@ export async function generateAssistantReply({
   });
   const headers = {
     "content-type": "application/json",
+    accept: "application/json, text/event-stream",
     ...normalizeHeaders(provider.extraHeaders)
   };
   if (provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
@@ -42,6 +43,7 @@ export async function generateAssistantReply({
   const retryOnTimeout = retryCfg.retryOnTimeout !== false;
   const retryOn429 = retryCfg.retryOn429 !== false;
   const retryOn5xx = retryCfg.retryOn5xx !== false;
+  const streamMode = normalizeStreamMode(provider.streamMode);
 
   const shouldRetry = (err) => {
     const status = Number(err?.status ?? err?.cause?.status ?? NaN);
@@ -61,7 +63,7 @@ export async function generateAssistantReply({
         const url = `${baseUrl}/v1/chat/completions`;
         const body = {
           model: provider.model,
-          stream: false,
+          stream: streamMode === "always",
           temperature,
           ...(Number.isFinite(topP) ? { top_p: topP } : {}),
           ...(Number.isFinite(presencePenalty) ? { presence_penalty: presencePenalty } : {}),
@@ -76,7 +78,7 @@ export async function generateAssistantReply({
           ]
         };
 
-        const json = await postJson({ url, headers, body, signal: controller.signal });
+        const json = await postCompatible({ url, headers, body, signal: controller.signal, apiType: "chat_completions" });
         const { text, usage } = extractChatCompletions(json);
         return { text, usage };
       }
@@ -97,6 +99,7 @@ export async function generateAssistantReply({
         style === "all_messages"
           ? {
               model: provider.model,
+              stream: streamMode === "always",
               temperature,
               ...(Number.isFinite(topP) ? { top_p: topP } : {}),
               max_output_tokens: maxOutputTokens,
@@ -113,6 +116,7 @@ export async function generateAssistantReply({
             }
           : {
               model: provider.model,
+              stream: streamMode === "always",
               temperature,
               ...(Number.isFinite(topP) ? { top_p: topP } : {}),
               max_output_tokens: maxOutputTokens,
@@ -120,7 +124,7 @@ export async function generateAssistantReply({
               input: inputMessages
             };
 
-      const json = await postJson({ url, headers, body, signal: controller.signal });
+      const json = await postCompatible({ url, headers, body, signal: controller.signal, apiType: "responses" });
       const { text, usage } = extractResponses(json);
       return { text, usage };
     } catch (err) {
@@ -171,7 +175,11 @@ function normalizeHeaders(h) {
   return out;
 }
 
-async function postJson({ url, headers, body, signal }) {
+function normalizeStreamMode(value) {
+  return value === "always" ? "always" : "auto";
+}
+
+async function postCompatible({ url, headers, body, signal, apiType }) {
   const res = await fetch(url, {
     method: "POST",
     headers,
@@ -180,6 +188,17 @@ async function postJson({ url, headers, body, signal }) {
   });
 
   const text = await res.text();
+  const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("text/event-stream") || looksLikeEventStream(text)) {
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status} from ${url}`);
+      err.status = res.status;
+      err.body = text;
+      throw err;
+    }
+    return parseEventStreamText({ text, apiType });
+  }
+
   let json = null;
   try {
     json = text ? JSON.parse(text) : null;
@@ -195,6 +214,9 @@ async function postJson({ url, headers, body, signal }) {
 }
 
 function extractChatCompletions(json) {
+  if (typeof json?.__streamText === "string" && json.__streamText.trim()) {
+    return { text: json.__streamText.trim(), usage: json.__streamUsage ?? normalizeUsage(json?.usage, "chat_completions") };
+  }
   const text = json?.choices?.[0]?.message?.content;
   const usage = normalizeUsage(json?.usage, "chat_completions");
   if (typeof text === "string" && text.trim()) return { text: text.trim(), usage };
@@ -204,6 +226,9 @@ function extractChatCompletions(json) {
 }
 
 function extractResponses(json) {
+  if (typeof json?.__streamText === "string" && json.__streamText.trim()) {
+    return { text: json.__streamText.trim(), usage: json.__streamUsage ?? normalizeUsage(json?.usage, "responses") };
+  }
   const usage = normalizeUsage(json?.usage, "responses");
   if (typeof json?.output_text === "string" && json.output_text.trim()) return { text: json.output_text.trim(), usage };
   if (Array.isArray(json?.output)) {
@@ -222,6 +247,159 @@ function extractResponses(json) {
   const msg = json?.output?.[0]?.content?.[0]?.text;
   if (typeof msg === "string" && msg.trim()) return { text: msg.trim(), usage };
   throw new Error("No text in /v1/responses response");
+}
+
+function looksLikeEventStream(text) {
+  return /^\s*data:/m.test(String(text || ""));
+}
+
+function parseEventStreamText({ text, apiType }) {
+  const state = {
+    apiType,
+    parts: [],
+    usage: null,
+    sawDelta: false
+  };
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+  let eventData = [];
+  for (const line of lines) {
+    if (!line) {
+      flushEventData({ eventData, state });
+      eventData = [];
+      continue;
+    }
+    if (line.startsWith(":")) continue;
+    if (line.startsWith("data:")) {
+      eventData.push(line.slice(5).trimStart());
+    }
+  }
+  flushEventData({ eventData, state });
+  const joined = state.parts.join("").trim();
+  if (!joined) {
+    throw new Error(
+      state.apiType === "chat_completions"
+        ? "No text in /v1/chat/completions stream response"
+        : "No text in /v1/responses stream response"
+    );
+  }
+  return {
+    __streamText: joined,
+    __streamUsage: state.usage
+  };
+}
+
+function flushEventData({ eventData, state }) {
+  if (!Array.isArray(eventData) || eventData.length === 0) return;
+  const payload = eventData.join("\n").trim();
+  if (!payload || payload === "[DONE]") return;
+  const json = tryParseJson(payload);
+  if (!json) {
+    appendStreamText(state, payload);
+    return;
+  }
+  if (json?.error) throw makeRemoteError(json.error);
+  if (state.apiType === "chat_completions") {
+    applyChatCompletionsStreamPayload(state, json);
+    return;
+  }
+  applyResponsesStreamPayload(state, json);
+}
+
+function applyChatCompletionsStreamPayload(state, json) {
+  const usage = normalizeUsage(json?.usage, "chat_completions");
+  if (usage) state.usage = usage;
+  const choices = Array.isArray(json?.choices) ? json.choices : [];
+  for (const choice of choices) {
+    if (appendAnyText(state, choice?.delta?.content, { markDelta: true })) continue;
+    appendAnyText(state, choice?.message?.content, { onlyIfEmpty: true });
+  }
+  appendAnyText(state, json?.text, { onlyIfEmpty: true });
+}
+
+function applyResponsesStreamPayload(state, json) {
+  const type = String(json?.type || "");
+  if (type === "response.error" || type === "error") throw makeRemoteError(json?.error || json);
+
+  const usage = normalizeUsage(json?.usage ?? json?.response?.usage, "responses");
+  if (usage) state.usage = usage;
+
+  if (type === "response.output_text.delta") {
+    appendAnyText(state, json?.delta, { markDelta: true });
+    return;
+  }
+  if (type === "response.output_text.done") {
+    appendAnyText(state, json?.text, { onlyIfEmpty: true });
+    return;
+  }
+  if (type === "response.completed") {
+    tryAdoptResponsesText(state, json?.response ?? json, { onlyIfEmpty: true });
+    return;
+  }
+
+  if (appendAnyText(state, json?.delta, { markDelta: true })) return;
+  if (appendAnyText(state, json?.output_text, { onlyIfEmpty: true })) return;
+  if (appendAnyText(state, json?.text, { onlyIfEmpty: true })) return;
+  tryAdoptResponsesText(state, json?.response ?? json, { onlyIfEmpty: true });
+}
+
+function tryAdoptResponsesText(state, json, { onlyIfEmpty = false } = {}) {
+  if (!json || typeof json !== "object") return false;
+  if (onlyIfEmpty && (state.parts.length > 0 || state.sawDelta)) return false;
+  try {
+    const { text, usage } = extractResponses(json);
+    if (text) appendStreamText(state, text);
+    if (usage) state.usage = usage;
+    return Boolean(text);
+  } catch {
+    return false;
+  }
+}
+
+function appendAnyText(state, value, { markDelta = false, onlyIfEmpty = false } = {}) {
+  if (onlyIfEmpty && (state.parts.length > 0 || state.sawDelta)) return false;
+  let added = false;
+  if (typeof value === "string") {
+    added = appendStreamText(state, value);
+  } else if (value && typeof value === "object") {
+    added = appendStreamText(state, value.text ?? value.content ?? "") || added;
+  } else if (Array.isArray(value)) {
+    for (const item of value) {
+      if (typeof item === "string") {
+        added = appendStreamText(state, item) || added;
+        continue;
+      }
+      added = appendStreamText(state, item?.text ?? item?.content ?? "") || added;
+    }
+  }
+  if (added && markDelta) state.sawDelta = true;
+  return added;
+}
+
+function appendStreamText(state, value) {
+  const text = typeof value === "string" ? value : "";
+  if (!text) return false;
+  state.parts.push(text);
+  return true;
+}
+
+function tryParseJson(text) {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
+}
+
+function makeRemoteError(error) {
+  const message =
+    typeof error?.message === "string" && error.message
+      ? error.message
+      : typeof error?.error?.message === "string" && error.error.message
+        ? error.error.message
+        : "upstream_stream_error";
+  const err = new Error(message);
+  if (error?.code) err.code = error.code;
+  return err;
 }
 
 function normalizeUsage(usage, apiType) {

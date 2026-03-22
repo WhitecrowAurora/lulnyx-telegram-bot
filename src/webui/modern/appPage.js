@@ -255,6 +255,23 @@ export function renderAppPage({ appName, configPath, hasConfigFile, ui, nonce })
                     <button class="btn" id="btnTgStatus" type="button">${tt("telegram.status_refresh")}</button>
                   </div>
                   <textarea id="tgStatusOut" style="min-height:140px" readonly></textarea>
+
+                  <div style="font-weight:700;margin:18px 0 6px">${tt("basics.miniapp")}</div>
+                  <label>${tt("field.miniapp_enabled")}</label>
+                  <select class="input" id="fMiniAppEnabled">
+                    <option value="false">false</option>
+                    <option value="true">true</option>
+                  </select>
+                  <label>${tt("field.miniapp_public_base_url")}</label>
+                  <input class="input" id="fMiniAppPublicBaseUrl" placeholder="https://example.com" />
+                  <label>${tt("field.miniapp_button_text")}</label>
+                  <input class="input" id="fMiniAppButtonText" placeholder="Panel" />
+                  <label>${tt("field.miniapp_title")}</label>
+                  <input class="input" id="fMiniAppTitle" placeholder="Telegram Panel" />
+                  <label>${tt("field.miniapp_users")}</label>
+                  <textarea id="fMiniAppUsers" style="min-height:110px" placeholder="${tt("placeholder.miniapp_users")}"></textarea>
+                  <div class="sub" style="margin-top:8px">${tt("miniapp.users_note")}</div>
+                  <div class="sub" style="margin-top:8px">${tt("miniapp.public_url_note")}</div>
                 </div>
               </div>
             </div>

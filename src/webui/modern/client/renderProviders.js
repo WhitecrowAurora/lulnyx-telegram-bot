@@ -62,6 +62,18 @@ function renderProviders(providers, defId) {
     body.appendChild(apiTypeL);
     body.appendChild(apiType);
 
+    const streamModeL = document.createElement("label");
+    streamModeL.textContent = I.labelStreamMode;
+    const streamMode = document.createElement("select");
+    streamMode.className = "input";
+    streamMode.dataset.field = "streamMode";
+    streamMode.innerHTML =
+      '<option value="auto"></option><option value="always"></option>';
+    streamMode.options[0].textContent = I.optionStreamAuto;
+    streamMode.options[1].textContent = I.optionStreamAlways;
+    body.appendChild(streamModeL);
+    body.appendChild(streamMode);
+
     const model = mk(I.labelModel, "text", "model", "gpt-4.1-mini");
     mk(I.labelApiKey + " (" + I.keepBlank + ")", "password", "apiKey", I.keepBlank).value = "";
 
@@ -99,6 +111,7 @@ function renderProviders(providers, defId) {
     name.value = p && p.name ? p.name : "";
     baseUrl.value = p && p.baseUrl ? p.baseUrl : "";
     apiType.value = p && p.apiType ? p.apiType : "responses";
+    streamMode.value = p && p.streamMode === "always" ? "always" : "auto";
     model.value = p && p.model ? p.model : "";
     apn.value = p && p.allowPrivateNetwork === true ? "true" : "false";
     rs.value = p && p.responsesStyle ? p.responsesStyle : "instructions+messages";
@@ -131,6 +144,7 @@ function renderProviders(providers, defId) {
     id.addEventListener("input", updateSummary);
     name.addEventListener("input", updateSummary);
     apiType.addEventListener("change", updateSummary);
+    streamMode.addEventListener("change", updateSummary);
     model.addEventListener("input", updateSummary);
     updateSummary();
 

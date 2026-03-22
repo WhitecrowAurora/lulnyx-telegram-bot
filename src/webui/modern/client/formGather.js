@@ -20,6 +20,12 @@ function gatherFormConfig() {
   cfg.web.username = String($("fAdminUser").value || "").trim() || "admin";
   cfg.web.password = String($("fAdminPass").value || ""); // blank => keep (server preserves)
   cfg.web.cookieSecure = $("fCookieSecure").value === "true";
+  cfg.web.miniApp = cfg.web.miniApp || {};
+  cfg.web.miniApp.enabled = $("fMiniAppEnabled").value === "true";
+  cfg.web.miniApp.publicBaseUrl = String($("fMiniAppPublicBaseUrl").value || "").trim();
+  cfg.web.miniApp.buttonText = String($("fMiniAppButtonText").value || "Panel").trim() || "Panel";
+  cfg.web.miniApp.title = String($("fMiniAppTitle").value || "Telegram Panel").trim() || "Telegram Panel";
+  cfg.web.miniApp.users = parseMiniAppUsers($("fMiniAppUsers").value);
 
   cfg.telegram = cfg.telegram || {};
   cfg.telegram.token = String($("fTgToken").value || ""); // blank => keep (server preserves)
@@ -133,6 +139,7 @@ function gatherFormConfig() {
       apiKey: String(get("apiKey")?.value || ""),
       apiType: String(get("apiType")?.value || "responses") === "chat_completions" ? "chat_completions" : "responses",
       model: String(get("model")?.value || "").trim(),
+      streamMode: String(get("streamMode")?.value || "auto") === "always" ? "always" : "auto",
       responsesStyle: String(get("responsesStyle")?.value || "instructions+messages"),
       responsesContentFormat: String(get("responsesContentFormat")?.value || "text"),
       extraHeaders,
